@@ -77,6 +77,17 @@ class RAGConfig(BaseModel):
     max_context_docs: int = 3
 
 
+class AggregationConfig(BaseModel):
+    enabled: bool = True
+    fetch_timeout: int = 15
+    max_items_per_feed: int = 20
+    cache_ttl_minutes: int = 30
+    min_relevance_score: float = 10.0
+    default_priorities: list[int] = [1, 2]
+    schedule_interval_hours: int = 6
+    auto_save_threshold: float = 35.0
+
+
 class AppConfig(BaseModel):
     ai: AIConfig = AIConfig()
     scheduling: SchedulingConfig = SchedulingConfig()
@@ -84,6 +95,7 @@ class AppConfig(BaseModel):
     linkedin: LinkedInConfig = LinkedInConfig()
     paths: PathsConfig = PathsConfig()
     rag: RAGConfig = RAGConfig()
+    aggregation: AggregationConfig = AggregationConfig()
 
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{(\w+)\}")
@@ -159,3 +171,7 @@ class ConfigManager:
     @property
     def rag(self) -> RAGConfig:
         return self.config.rag
+
+    @property
+    def aggregation(self) -> AggregationConfig:
+        return self.config.aggregation

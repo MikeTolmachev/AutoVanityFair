@@ -23,6 +23,7 @@ from ui.pages.comments_queue import render_comments_queue
 from ui.pages.analytics import render_analytics
 from ui.pages.content_library import render_content_library
 from ui.pages.settings import render_settings
+from ui.pages.feed_aggregator import render_feed_aggregator
 
 st.set_page_config(
     page_title="OpenLinkedIn",
@@ -111,8 +112,8 @@ def main():
                 st.sidebar.error(f"Generation failed: {e}")
 
     # Tab navigation
-    tab_posts, tab_comments, tab_analytics, tab_library, tab_settings = st.tabs(
-        ["Posts Queue", "Comments Queue", "Analytics", "Content Library", "Settings"]
+    tab_posts, tab_comments, tab_feeds, tab_analytics, tab_library, tab_settings = st.tabs(
+        ["Posts Queue", "Comments Queue", "Feed Aggregator", "Analytics", "Content Library", "Settings"]
     )
 
     with tab_posts:
@@ -120,6 +121,10 @@ def main():
 
     with tab_comments:
         render_comments_queue(comment_crud)
+
+    with tab_feeds:
+        vs = get_vector_store(config)
+        render_feed_aggregator(content_crud, vector_store=vs)
 
     with tab_analytics:
         render_analytics(post_crud, comment_crud, log_crud)

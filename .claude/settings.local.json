@@ -46,7 +46,9 @@
       "Bash(python3 -m venv /Users/Mikhail_Tolmachev1/dev/OpenLinkedIn/.venv)",
       "Bash(source /Users/Mikhail_Tolmachev1/dev/OpenLinkedIn/.venv/bin/activate)",
       "Bash(pip install pytest pyyaml python-dotenv pydantic tenacity)",
-      "Bash(python main.py setup)"
+      "Bash(python main.py setup)",
+      "Bash(python -m pytest tests/test_config_manager.py tests/test_crud.py tests/test_safety_monitor.py tests/test_generators.py tests/test_content_filter.py tests/test_rss_aggregator.py -v)",
+      "Bash(python -m pytest tests/ -v)"
     ]
   }
 }

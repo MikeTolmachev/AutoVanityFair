@@ -1,11 +1,13 @@
 import pytest
 
-from src.database.vector_store import VectorStore
+chromadb = pytest.importorskip("chromadb", reason="chromadb not installed")
 
 
 @pytest.fixture
 def vector_store(tmp_path):
     """Create a VectorStore with a temp directory."""
+    from src.database.vector_store import VectorStore
+
     try:
         vs = VectorStore(
             persist_directory=str(tmp_path / "chroma"),

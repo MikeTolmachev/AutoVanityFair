@@ -183,6 +183,72 @@ def cmd_generate_post(args):
     print(f"\n--- Content ---\n{result['content']}\n")
 
 
+def cmd_fetch_feeds(args):
+    """Fetch and score content from RSS/API feeds."""
+    from src.core.config_manager import ConfigManager
+    from src.database.models import Database
+    from src.database.crud import FeedItemCRUD, ContentLibraryCRUD
+    from src.content.rss_aggregator import RSSAggregator
+    from src.content.content_filter import ContentFilter
+
+    config = ConfigManager()
+    db = Database(config.paths.database)
+    feed_crud = FeedItemCRUD(db)
+    content_crud = ContentLibraryCRUD(db)
+
+    content_filter = ContentFilter(
+        min_score_threshold=args.min_score or config.aggregation.min_relevance_score,
+    )
+    aggregator = RSSAggregator(
+        content_filter=content_filter,
+        fetch_timeout=config.aggregation.fetch_timeout,
+        max_items_per_feed=config.aggregation.max_items_per_feed,
+    )
+
+    priorities = [int(p) for p in args.priorities.split(",")] if args.priorities else config.aggregation.default_priorities
+
+    print(f"Fetching feeds (priorities: {priorities})...")
+    scored = aggregator.fetch_and_filter(
+        priorities=priorities,
+        max_results=args.max_results,
+    )
+
+    print(f"\nTop {len(scored)} results:\n")
+    for i, item in enumerate(scored, 1):
+        print(f"  {i:2d}. [{item.final_score:5.1f}] {item.title[:70]}")
+        print(f"      Source: {item.source} | Type: {item.content_type.value}")
+
+        # Persist to DB
+        import hashlib
+        item_hash = hashlib.sha256(f"{item.title}{item.url}".encode()).hexdigest()[:16]
+        feed_crud.upsert(
+            item_hash=item_hash,
+            title=item.title,
+            content=item.content,
+            url=item.url,
+            source_name=item.source,
+            production_score=item.production_score,
+            executive_score=item.executive_score,
+            keyword_score=item.keyword_score,
+            final_score=item.final_score,
+            content_type=item.content_type.value,
+            matched_keywords=item.matched_keywords,
+            matched_categories=item.matched_categories,
+        )
+
+        # Auto-save high-scoring items to content library
+        if item.final_score >= config.aggregation.auto_save_threshold:
+            content_crud.add(
+                title=item.title,
+                content=item.content,
+                source=item.url or item.source,
+                tags=[item.content_type.value],
+            )
+            print(f"      >> Auto-saved to content library (score >= {config.aggregation.auto_save_threshold})")
+
+    print(f"\n{len(scored)} items scored and persisted.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="OpenLinkedIn CLI")
     subparsers = parser.add_subparsers(dest="command")
@@ -199,6 +265,25 @@ def main():
         default="thought_leadership",
     )
 
+    feed_parser = subparsers.add_parser("fetch-feeds", help="Fetch and score RSS/API feeds")
+    feed_parser.add_argument(
+        "--priorities",
+        default=None,
+        help="Comma-separated priorities (e.g., 1,2). Default: from config",
+    )
+    feed_parser.add_argument(
+        "--max-results",
+        type=int,
+        default=20,
+        help="Maximum results to return",
+    )
+    feed_parser.add_argument(
+        "--min-score",
+        type=float,
+        default=None,
+        help="Minimum relevance score threshold",
+    )
+
     args = parser.parse_args()
 
     if args.command == "setup":
@@ -209,6 +294,8 @@ def main():
         cmd_ui(args)
     elif args.command == "generate-post":
         cmd_generate_post(args)
+    elif args.command == "fetch-feeds":
+        cmd_fetch_feeds(args)
     else:
         parser.print_help()
 

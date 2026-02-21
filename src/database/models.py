@@ -59,6 +59,27 @@ CREATE TABLE IF NOT EXISTS config (
     value TEXT NOT NULL,
     updated_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS feed_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_hash TEXT UNIQUE NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT,
+    url TEXT,
+    source_name TEXT,
+    source_category TEXT,
+    author TEXT,
+    published_at TEXT,
+    production_score REAL DEFAULT 0.0,
+    executive_score REAL DEFAULT 0.0,
+    keyword_score REAL DEFAULT 0.0,
+    final_score REAL DEFAULT 0.0,
+    content_type TEXT,
+    matched_keywords TEXT,
+    matched_categories TEXT,
+    saved_to_library INTEGER DEFAULT 0,
+    fetched_at TEXT DEFAULT (datetime('now'))
+);
 """
 
 

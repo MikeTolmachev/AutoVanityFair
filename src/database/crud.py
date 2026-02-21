@@ -246,3 +246,94 @@ class ContentLibraryCRUD:
         with self.db.connect() as conn:
             row = conn.execute("SELECT COUNT(*) as cnt FROM content_library").fetchone()
             return row["cnt"]
+
+
+class FeedItemCRUD:
+    def __init__(self, db: Database):
+        self.db = db
+
+    def upsert(
+        self,
+        item_hash: str,
+        title: str,
+        content: str = "",
+        url: str = "",
+        source_name: str = "",
+        source_category: str = "",
+        author: str = "",
+        published_at: Optional[str] = None,
+        production_score: float = 0.0,
+        executive_score: float = 0.0,
+        keyword_score: float = 0.0,
+        final_score: float = 0.0,
+        content_type: str = "",
+        matched_keywords: Optional[list[str]] = None,
+        matched_categories: Optional[list[str]] = None,
+    ) -> int:
+        with self.db.connect() as conn:
+            cursor = conn.execute(
+                """INSERT INTO feed_items
+                   (item_hash, title, content, url, source_name, source_category,
+                    author, published_at, production_score, executive_score,
+                    keyword_score, final_score, content_type,
+                    matched_keywords, matched_categories)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(item_hash) DO UPDATE SET
+                    final_score = excluded.final_score,
+                    fetched_at = datetime('now')""",
+                (
+                    item_hash,
+                    title,
+                    content,
+                    url,
+                    source_name,
+                    source_category,
+                    author,
+                    published_at,
+                    production_score,
+                    executive_score,
+                    keyword_score,
+                    final_score,
+                    content_type,
+                    json.dumps(matched_keywords) if matched_keywords else None,
+                    json.dumps(matched_categories) if matched_categories else None,
+                ),
+            )
+            return cursor.lastrowid
+
+    def get_top_scored(self, limit: int = 20, min_score: float = 0.0) -> list[dict]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """SELECT * FROM feed_items
+                   WHERE final_score >= ?
+                   ORDER BY final_score DESC LIMIT ?""",
+                (min_score, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_by_source(self, source_name: str, limit: int = 20) -> list[dict]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM feed_items WHERE source_name = ? ORDER BY final_score DESC LIMIT ?",
+                (source_name, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def mark_saved(self, item_id: int) -> None:
+        with self.db.connect() as conn:
+            conn.execute(
+                "UPDATE feed_items SET saved_to_library = 1 WHERE id = ?",
+                (item_id,),
+            )
+
+    def count(self) -> int:
+        with self.db.connect() as conn:
+            row = conn.execute("SELECT COUNT(*) as cnt FROM feed_items").fetchone()
+            return row["cnt"]
+
+    def count_by_source(self) -> dict[str, int]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                "SELECT source_name, COUNT(*) as cnt FROM feed_items GROUP BY source_name"
+            ).fetchall()
+            return {r["source_name"]: r["cnt"] for r in rows}

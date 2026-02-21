@@ -48,3 +48,13 @@ rag:
   embedding_model: "all-MiniLM-L6-v2"
   similarity_threshold: 0.65
   max_context_docs: 3
+
+aggregation:
+  enabled: true
+  fetch_timeout: 15
+  max_items_per_feed: 20
+  cache_ttl_minutes: 30
+  min_relevance_score: 10.0
+  default_priorities: [1, 2]
+  schedule_interval_hours: 6
+  auto_save_threshold: 35.0
