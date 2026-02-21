@@ -1,0 +1,50 @@
+ai:
+  provider: "openai"  # "openai" or "anthropic"
+  openai:
+    api_key: "${OPENAI_API_KEY}"
+    model: "gpt-4o"
+    max_tokens: 1024
+    temperature: 0.7
+  anthropic:
+    api_key: "${ANTHROPIC_API_KEY}"
+    model: "claude-sonnet-4-20250514"
+    max_tokens: 1024
+    temperature: 0.7
+
+scheduling:
+  timezone: "Europe/Berlin"
+  posts:
+    cron_hour: "7-9"
+    cron_minute: "0,30"
+    max_per_day: 2
+  comments:
+    interval_hours: 2
+    active_start_hour: 9
+    active_end_hour: 21
+    max_per_day: 10
+
+safety:
+  hourly_action_limit: 8
+  daily_action_limit: 30
+  weekly_action_limit: 150
+  error_rate_threshold: 0.3
+  error_window_seconds: 3600
+  cooldown_minutes: 30
+
+linkedin:
+  email: "${LINKEDIN_EMAIL}"
+  password: "${LINKEDIN_PASSWORD}"
+  browser_profile_dir: "data/browser_profile"
+  headless: false
+  slow_mo: 50
+
+paths:
+  database: "data/openlinkedin.db"
+  logs: "logs"
+  chroma_persist: "data/chroma"
+
+rag:
+  collection_name: "content_library"
+  embedding_model: "all-MiniLM-L6-v2"
+  similarity_threshold: 0.65
+  max_context_docs: 3

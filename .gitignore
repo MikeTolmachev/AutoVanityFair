@@ -1,0 +1,36 @@
+# Environment
+.env
+.venv/
+venv/
+
+# Data
+data/
+*.db
+
+# External repos
+external/
+
+# Browser profiles
+browser_profile/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
