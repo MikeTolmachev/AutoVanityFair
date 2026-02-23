@@ -150,7 +150,7 @@ class TestFeedSources:
         assert all(f.priority == 1 for f in PRIORITY_1_FEEDS)
 
     def test_priority_2_feeds(self):
-        assert len(PRIORITY_2_FEEDS) == 4
+        assert len(PRIORITY_2_FEEDS) == 3
         assert all(f.priority == 2 for f in PRIORITY_2_FEEDS)
 
     def test_all_feeds_have_urls(self):

@@ -43,7 +43,14 @@ class FeedSource:
 PRIORITY_1_FEEDS: list[FeedSource] = [
     FeedSource(
         name="Hugging Face Daily Papers",
-        url="https://huggingface.co/papers/rss",
+        url="https://huggingface.co/api/daily_papers",
+        source_type="api",
+        priority=1,
+        category="Production AI & MLOps",
+    ),
+    FeedSource(
+        name="Hugging Face Blog",
+        url="https://huggingface.co/blog/feed.xml",
         source_type="rss",
         priority=1,
         category="Production AI & MLOps",
@@ -64,14 +71,14 @@ PRIORITY_1_FEEDS: list[FeedSource] = [
     ),
     FeedSource(
         name="Neptune.ai Blog",
-        url="https://neptune.ai/blog/rss.xml",
+        url="https://neptune.ai/blog/feed",
         source_type="rss",
         priority=1,
         category="Production AI & MLOps",
     ),
     FeedSource(
         name="Weights & Biases Blog",
-        url="https://wandb.ai/site/rss.xml",
+        url="https://wandb.ai/fully-connected/rss.xml",
         source_type="rss",
         priority=1,
         category="Production AI & MLOps",
@@ -79,13 +86,6 @@ PRIORITY_1_FEEDS: list[FeedSource] = [
     FeedSource(
         name="PyTorch Blog",
         url="https://pytorch.org/blog/feed.xml",
-        source_type="rss",
-        priority=1,
-        category="Production AI & MLOps",
-    ),
-    FeedSource(
-        name="TensorFlow Blog",
-        url="https://blog.tensorflow.org/feeds/posts/default",
         source_type="rss",
         priority=1,
         category="Production AI & MLOps",
@@ -102,29 +102,22 @@ PRIORITY_1_FEEDS: list[FeedSource] = [
 # Priority 2: Engineering-Focused Research Sources
 PRIORITY_2_FEEDS: list[FeedSource] = [
     FeedSource(
-        name="Papers with Code",
-        url="https://paperswithcode.com/api/v1/",
-        source_type="api",
-        priority=2,
-        category="Engineering Research",
-    ),
-    FeedSource(
         name="Google AI Blog",
-        url="https://ai.googleblog.com/feeds/posts/default",
+        url="https://blog.google/technology/ai/rss/",
         source_type="rss",
         priority=2,
         category="Engineering Research",
     ),
     FeedSource(
         name="Meta AI Research",
-        url="https://ai.facebook.com/blog/rss/",
+        url="https://engineering.fb.com/category/ai-research/feed/",
         source_type="rss",
         priority=2,
         category="Engineering Research",
     ),
     FeedSource(
         name="OpenAI Blog",
-        url="https://openai.com/blog/rss/",
+        url="https://openai.com/news/rss.xml",
         source_type="rss",
         priority=2,
         category="Engineering Research",
@@ -192,6 +185,13 @@ PRIORITY_4_FEEDS: list[FeedSource] = [
         source_type="rss",
         priority=4,
         category="Community & Discussion",
+    ),
+    FeedSource(
+        name="TensorFlow Blog",
+        url="https://blog.tensorflow.org/feeds/posts/default",
+        source_type="rss",
+        priority=4,
+        category="Legacy Frameworks",
     ),
 ]
 
@@ -334,37 +334,50 @@ def _strip_html(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Papers with Code API
+# Hugging Face Daily Papers API
 # ---------------------------------------------------------------------------
-def _fetch_papers_with_code(max_results: int = 20) -> list[FeedItem]:
-    """Fetch trending papers from Papers with Code API."""
-    url = f"https://paperswithcode.com/api/v1/papers/?ordering=-proceeding&items_per_page={max_results}"
+def _fetch_huggingface_daily_papers(max_results: int = 20) -> list[FeedItem]:
+    """Fetch trending papers from Hugging Face Daily Papers JSON API."""
+    url = "https://huggingface.co/api/daily_papers"
     raw = _fetch_url(url, timeout=20)
     if not raw:
         return []
 
     items: list[FeedItem] = []
     try:
-        data = json.loads(raw)
-        results = data.get("results", [])
-        for paper in results:
-            title = paper.get("title", "")
-            abstract = paper.get("abstract", "")
-            paper_url = paper.get("url_abs", "") or paper.get("paper_url", "")
+        papers = json.loads(raw)
+        if not isinstance(papers, list):
+            papers = papers.get("results", papers.get("data", []))
+
+        for paper in papers[:max_results]:
+            # The API returns paper objects; exact schema may vary
+            paper_data = paper.get("paper", paper)
+            title = paper_data.get("title", paper.get("title", ""))
+            summary = paper_data.get("summary", paper.get("summary", ""))
+            paper_id = paper_data.get("id", paper.get("id", ""))
+            paper_url = f"https://huggingface.co/papers/{paper_id}" if paper_id else ""
+            authors = paper_data.get("authors", paper.get("authors", []))
+            author_names = []
+            for a in authors[:3]:
+                if isinstance(a, dict):
+                    author_names.append(a.get("name", a.get("user", "")))
+                elif isinstance(a, str):
+                    author_names.append(a)
+            published = paper.get("publishedAt", paper.get("published", ""))
 
             if title:
                 items.append(FeedItem(
                     title=title,
-                    content=abstract[:500] if abstract else "",
+                    content=summary[:500] if summary else "",
                     url=paper_url,
-                    source_name="Papers with Code",
-                    source_priority=2,
-                    source_category="Engineering Research",
-                    published_at=paper.get("published", ""),
-                    author=", ".join(paper.get("authors", [])[:3]),
+                    source_name="Hugging Face Daily Papers",
+                    source_priority=1,
+                    source_category="Production AI & MLOps",
+                    published_at=published,
+                    author=", ".join(author_names),
                 ))
     except (json.JSONDecodeError, KeyError) as e:
-        logger.warning("Papers with Code parse error: %s", e)
+        logger.warning("Hugging Face Daily Papers parse error: %s", e)
 
     return items
 
@@ -411,8 +424,8 @@ class RSSAggregator:
 
         logger.info("Fetching feed: %s", source.name)
 
-        if source.source_type == "api" and "paperswithcode" in source.url:
-            items = _fetch_papers_with_code(self.max_items_per_feed)
+        if source.source_type == "api" and "huggingface.co/api/daily_papers" in source.url:
+            items = _fetch_huggingface_daily_papers(self.max_items_per_feed)
         else:
             raw = _fetch_url(source.url, timeout=self.fetch_timeout)
             if not raw:

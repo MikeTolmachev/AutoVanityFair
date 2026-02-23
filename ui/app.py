@@ -18,12 +18,12 @@ from src.content.generator import create_ai_provider
 from src.content.post_generator import PostGenerator
 from src.content.validators import ContentValidator
 from ui.components.stats_widget import render_sidebar_stats
-from ui.pages.posts_queue import render_posts_queue
-from ui.pages.comments_queue import render_comments_queue
-from ui.pages.analytics import render_analytics
-from ui.pages.content_library import render_content_library
-from ui.pages.settings import render_settings
-from ui.pages.feed_aggregator import render_feed_aggregator
+from ui.views.posts_queue import render_posts_queue
+from ui.views.comments_queue import render_comments_queue
+from ui.views.analytics import render_analytics
+from ui.views.content_library import render_content_library
+from ui.views.settings import render_settings
+from ui.views.feed_aggregator import render_feed_aggregator
 
 st.set_page_config(
     page_title="OpenLinkedIn",

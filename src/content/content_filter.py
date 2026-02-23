@@ -14,10 +14,12 @@ from src.content.keyword_taxonomy import (
     RESEARCH_KEYWORDS,
     BUSINESS_KEYWORDS,
     IMPLEMENTATION_KEYWORDS,
+    FRAMEWORK_WEIGHTS,
     EXECUTIVE_SCALE_INDICATORS,
     EXECUTIVE_LEADERSHIP_SIGNALS,
     EXECUTIVE_OPERATIONAL_EXCELLENCE,
     EXECUTIVE_TEAM_ORG,
+    EXECUTIVE_BUSINESS_OUTCOMES,
     THEORY_ONLY_INDICATORS,
     HIGH_PRIORITY_KEYWORDS,
     MEDIUM_PRIORITY_KEYWORDS,
@@ -125,10 +127,10 @@ class ContentFilter:
         scored.matched_keywords = self._find_matched_keywords(combined_text)
         scored.matched_categories = self._find_matched_categories(combined_text)
 
-        # Final composite score
+        # Final composite score (business-applied weighting)
         base_score = (
-            scored.production_score * 0.4
-            + scored.executive_score * 0.25
+            scored.production_score * 0.30
+            + scored.executive_score * 0.35
             + scored.keyword_score * 0.35
         )
         scored.final_score = round(base_score * scored.type_multiplier, 2)
@@ -177,14 +179,19 @@ class ContentFilter:
             if keyword.lower() in text_lower:
                 score += weight
 
-        # Business impact keywords (medium-high weight)
+        # Business impact keywords (boosted weight)
         for keyword, weight in BUSINESS_KEYWORDS.items():
             if keyword.lower() in text_lower:
                 score += weight
 
-        # Implementation indicators (high weight)
+        # Implementation indicators
         for keyword, weight in IMPLEMENTATION_KEYWORDS.items():
             if keyword.lower() in text_lower:
+                score += weight
+
+        # Framework-specific weights (PyTorch >> TensorFlow)
+        for framework, weight in FRAMEWORK_WEIGHTS.items():
+            if framework.lower() in text_lower:
                 score += weight
 
         # Bonus: production + implementation combination
@@ -197,6 +204,13 @@ class ContentFilter:
         if has_production and has_implementation:
             score += 15
 
+        # Bonus: business + production combination
+        has_business = any(
+            k.lower() in text_lower for k in BUSINESS_KEYWORDS
+        )
+        if has_business and has_production:
+            score += 12
+
         # Penalty: pure theory without application
         has_theory = any(t.lower() in text_lower for t in THEORY_ONLY_INDICATORS)
         if has_theory and not has_production:
@@ -205,7 +219,7 @@ class ContentFilter:
         return max(0.0, score)
 
     # ------------------------------------------------------------------
-    # Stage 2: Executive Positioning Filter
+    # Stage 2: Executive / Business Positioning Filter
     # ------------------------------------------------------------------
     def _calculate_executive_score(self, text: str) -> float:
         if not self.enable_executive_filter:
@@ -213,6 +227,11 @@ class ContentFilter:
 
         text_lower = text.lower()
         score = 0.0
+
+        # Business outcomes (highest weight -- applied AI focus)
+        for indicator in EXECUTIVE_BUSINESS_OUTCOMES:
+            if indicator.lower() in text_lower:
+                score += 6
 
         # Scale indicators
         for indicator in EXECUTIVE_SCALE_INDICATORS:
@@ -227,7 +246,7 @@ class ContentFilter:
         # Operational excellence
         for indicator in EXECUTIVE_OPERATIONAL_EXCELLENCE:
             if indicator.lower() in text_lower:
-                score += 4
+                score += 3
 
         # Team/organizational
         for indicator in EXECUTIVE_TEAM_ORG:
