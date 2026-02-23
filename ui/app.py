@@ -13,7 +13,7 @@ import streamlit as st
 from src.core.config_manager import ConfigManager
 from src.core.safety_monitor import SafetyMonitor
 from src.database.models import Database
-from src.database.crud import PostCRUD, CommentCRUD, InteractionLogCRUD, ContentLibraryCRUD
+from src.database.crud import PostCRUD, CommentCRUD, InteractionLogCRUD, ContentLibraryCRUD, FeedItemCRUD
 from src.content.generator import create_ai_provider
 from src.content.post_generator import PostGenerator
 from src.content.validators import ContentValidator
@@ -78,6 +78,7 @@ def main():
     comment_crud = CommentCRUD(db)
     log_crud = InteractionLogCRUD(db)
     content_crud = ContentLibraryCRUD(db)
+    feed_crud = FeedItemCRUD(db)
 
     # Sidebar
     st.sidebar.title("OpenLinkedIn")
@@ -111,27 +112,48 @@ def main():
             except Exception as e:
                 st.sidebar.error(f"Generation failed: {e}")
 
-    # Tab navigation
-    tab_posts, tab_comments, tab_feeds, tab_analytics, tab_library, tab_settings = st.tabs(
-        ["Posts Queue", "Comments Queue", "Feed Aggregator", "Analytics", "Content Library", "Settings"]
-    )
-
-    with tab_posts:
-        render_posts_queue(post_crud)
-
-    with tab_comments:
-        render_comments_queue(comment_crud)
+    # Tab navigation -- ordered by workflow
+    tab_feeds, tab_library, tab_posts, tab_comments, tab_analytics, tab_settings = st.tabs([
+        "1. Feed Aggregator",
+        "2. Content Library",
+        "3. Posts Queue",
+        "4. Comments",
+        "Analytics",
+        "Settings",
+    ])
 
     with tab_feeds:
         vs = get_vector_store(config)
         render_feed_aggregator(content_crud, vector_store=vs)
 
-    with tab_analytics:
-        render_analytics(post_crud, comment_crud, log_crud)
-
     with tab_library:
         vs = get_vector_store(config)
-        render_content_library(content_crud, vector_store=vs)
+        render_content_library(
+            content_crud,
+            vector_store=vs,
+            post_crud=post_crud,
+            ai_config=config.ai,
+        )
+
+    with tab_posts:
+        render_posts_queue(
+            post_crud,
+            log_crud=log_crud,
+            linkedin_config=config.linkedin,
+            content_crud=content_crud,
+        )
+
+    with tab_comments:
+        render_comments_queue(
+            comment_crud,
+            post_crud=post_crud,
+            feed_crud=feed_crud,
+            ai_config=config.ai,
+            linkedin_config=config.linkedin,
+        )
+
+    with tab_analytics:
+        render_analytics(post_crud, comment_crud, log_crud)
 
     with tab_settings:
         render_settings(config)

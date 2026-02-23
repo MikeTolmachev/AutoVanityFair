@@ -117,7 +117,19 @@
       "Bash(# Check the HF daily papers API endpoint more carefully curl -s \"\"https://huggingface.co/api/daily_papers\"\" | python3 -c \"\"import json,sys; data=json.load\\(sys.stdin\\); print\\(len\\(data\\)\\); print\\(json.dumps\\(data[0], indent=2\\)\\)\"\")",
       "Bash(python3 -c \"import json,sys; data=json.load\\(sys.stdin\\); print\\(len\\(data\\)\\); print\\(json.dumps\\(data[0], indent=2\\)\\)\")",
       "Bash(# Verify the OpenAI news RSS canonical URL curl -sI \"\"https://openai.com/news/rss.xml\"\")",
-      "Bash(# Verify the Google AI blog RSS final URL after redirect curl -sLI \"\"https://blog.google/technology/ai/rss/\"\")"
+      "Bash(# Verify the Google AI blog RSS final URL after redirect curl -sLI \"\"https://blog.google/technology/ai/rss/\"\")",
+      "Bash(python -c \":*)",
+      "Bash(python -m pytest tests/ -q)",
+      "Bash(source /Users/Mikhail_Tolmachev1/dev/OpenLinkedIn/.venv/bin/activate && python -c \"\nimport openai\nprint\\('openai version:', openai.__version__\\)\nc = openai.OpenAI\\(api_key='test'\\)\nprint\\('has responses:', hasattr\\(c, 'responses'\\)\\)\n\" 2>&1)",
+      "Bash(tail:*)",
+      "Bash(source /Users/Mikhail_Tolmachev1/dev/OpenLinkedIn/.venv/bin/activate && python -c \"\nfrom src.database.models import Database\nfrom src.database.crud import PostCRUD, ContentLibraryCRUD\ndb = Database\\('data/openlinkedin.db'\\)\nposts = PostCRUD\\(db\\).list_by_status\\('published', limit=3\\)\nfor p in posts:\n    print\\(f\\\\\"Post #{p['id']}: rag_sources={p['rag_sources']}, status={p['status']}\\\\\"\\)\ndocs = ContentLibraryCRUD\\(db\\).list_all\\(limit=3\\)\nfor d in docs:\n    print\\(f\\\\\"Doc #{d['id']}: source={d.get\\('source',''\\)[:60]}\\\\\"\\)\n\" 2>&1)",
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:developers.google.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:linkedin-api.readthedocs.io)",
+      "WebFetch(domain:nubela.co)",
+      "WebFetch(domain:serpapi.com)",
+      "Bash(pip show:*)"
     ]
   }
 }

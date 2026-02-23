@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 class OpenAIConfig(BaseModel):
     api_key: str = ""
     model: str = "gpt-4o"
+    fast_model: str = "gpt-4o-mini"
     max_tokens: int = 1024
     temperature: float = 0.7
 

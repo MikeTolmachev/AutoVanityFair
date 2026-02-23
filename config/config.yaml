@@ -3,6 +3,7 @@ ai:
   openai:
     api_key: "${OPENAI_API_KEY}"
     model: "gpt-5.2-pro"
+    fast_model: "gpt-5-nano"
     max_tokens: 1024
     temperature: 0.7
   anthropic:

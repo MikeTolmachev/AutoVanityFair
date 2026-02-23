@@ -1,48 +1,19 @@
 """
-Adapter for OpenOutreach's Django-free Playwright functions.
+Playwright helpers for LinkedIn browser automation.
 
-Wraps functions from `external/OpenOutreach/` that don't depend on Django:
-- build_playwright() from linkedin/navigation/login.py
-- human_type() from linkedin/navigation/utils.py
-- playwright_login() from linkedin/navigation/login.py
-
-If OpenOutreach is not cloned, provides standalone fallback implementations.
+Provides: build_playwright(), human_type(), playwright_login(), goto_page().
 """
 
 import logging
 import os
 import random
 import sys
-import time
 
 logger = logging.getLogger("openlinkedin.adapter")
 
-_OPENOUTREACH_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "external", "OpenOutreach"
-)
-
-_openoutreach_available = False
-
-if os.path.isdir(_OPENOUTREACH_PATH):
-    sys.path.insert(0, _OPENOUTREACH_PATH)
-    try:
-        from linkedin.navigation.utils import human_type as _oo_human_type
-        from linkedin.navigation.login import build_playwright as _oo_build_playwright
-
-        _openoutreach_available = True
-        logger.info("OpenOutreach modules loaded from %s", _OPENOUTREACH_PATH)
-    except ImportError as e:
-        logger.warning("OpenOutreach import failed: %s. Using fallbacks.", e)
-
 
 async def build_playwright(headless: bool = False, slow_mo: int = 50, profile_dir: str = ""):
-    """Build a Playwright browser instance.
-
-    Uses OpenOutreach's implementation if available, otherwise standalone.
-    """
-    if _openoutreach_available:
-        return await _oo_build_playwright(headless=headless, slow_mo=slow_mo)
-
+    """Build a Playwright persistent browser context."""
     from playwright.async_api import async_playwright
 
     pw = await async_playwright().start()
@@ -67,51 +38,122 @@ async def build_playwright(headless: bool = False, slow_mo: int = 50, profile_di
     return pw, browser
 
 
-async def human_type(page, selector: str, text: str) -> None:
-    """Type text with human-like delays."""
-    if _openoutreach_available:
-        await _oo_human_type(page, selector, text)
-        return
-
-    element = await page.query_selector(selector)
-    if element:
-        await element.click()
-        for char in text:
-            await page.keyboard.type(char, delay=random.randint(50, 150))
-            if random.random() < 0.1:
-                await page.wait_for_timeout(random.randint(100, 300))
+async def human_type(page, text: str) -> None:
+    """Type text character-by-character with human-like delays into the currently focused element."""
+    for char in text:
+        await page.keyboard.type(char, delay=random.randint(50, 150))
+        if random.random() < 0.1:
+            await page.wait_for_timeout(random.randint(100, 300))
 
 
 async def playwright_login(session) -> None:
-    """Log into LinkedIn using session credentials.
-
-    Args:
-        session: Object with .page, .account_cfg (dict with 'email', 'password'), .wait()
-    """
+    """Log into LinkedIn. Skips login if cookies already have an active session."""
     page = session.page
     email = session.account_cfg["email"]
     password = session.account_cfg["password"]
 
-    await page.goto("https://www.linkedin.com/login")
-    await page.wait_for_load_state("networkidle")
+    # Check if already logged in via saved cookies
+    logger.info("Checking if already logged in...")
+    await page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded")
+    await page.wait_for_timeout(3000)
 
-    await human_type(page, "#username", email)
-    await human_type(page, "#password", password)
+    if "/feed" in page.url and "login" not in page.url:
+        logger.info("Already logged in via saved cookies")
+        return
 
-    await page.click('button[type="submit"]')
-    await page.wait_for_load_state("networkidle")
-    await session.wait(3)
+    # Navigate to login page
+    logger.info("Not logged in, navigating to login page...")
+    await page.goto("https://www.linkedin.com/login", wait_until="domcontentloaded")
+    await page.wait_for_timeout(2000)
 
-    if "feed" in page.url or "mynetwork" in page.url:
-        logger.info("LinkedIn login successful")
-    elif "checkpoint" in page.url or "challenge" in page.url:
-        logger.warning("LinkedIn security challenge detected - manual intervention may be needed")
+    # Find and fill email field -- try multiple selectors
+    email_selectors = [
+        'input#username',
+        'input[name="session_key"]',
+        'input[autocomplete="username"]',
+        'input[type="text"]',
+    ]
+    email_filled = False
+    for sel in email_selectors:
+        try:
+            el = page.locator(sel).first
+            if await el.is_visible(timeout=2000):
+                await el.click()
+                await el.fill("")
+                await human_type(page, email)
+                email_filled = True
+                logger.info("Email entered via selector: %s", sel)
+                break
+        except Exception:
+            continue
+
+    if not email_filled:
+        raise RuntimeError("Could not find email input on login page")
+
+    # Find and fill password field
+    password_selectors = [
+        'input#password',
+        'input[name="session_password"]',
+        'input[autocomplete="current-password"]',
+        'input[type="password"]',
+    ]
+    password_filled = False
+    for sel in password_selectors:
+        try:
+            el = page.locator(sel).first
+            if await el.is_visible(timeout=2000):
+                await el.click()
+                await el.fill("")
+                await human_type(page, password)
+                password_filled = True
+                logger.info("Password entered via selector: %s", sel)
+                break
+        except Exception:
+            continue
+
+    if not password_filled:
+        raise RuntimeError("Could not find password input on login page")
+
+    # Click sign in button
+    submit_selectors = [
+        'button[type="submit"]',
+        'button[aria-label="Sign in"]',
+        'button:has-text("Sign in")',
+    ]
+    clicked = False
+    for sel in submit_selectors:
+        try:
+            btn = page.locator(sel).first
+            if await btn.is_visible(timeout=2000):
+                await btn.click()
+                clicked = True
+                logger.info("Sign in clicked via: %s", sel)
+                break
+        except Exception:
+            continue
+
+    if not clicked:
+        raise RuntimeError("Could not find Sign in button")
+
+    await page.wait_for_timeout(5000)
+
+    current_url = page.url
+    if "feed" in current_url or "mynetwork" in current_url:
+        logger.info("LinkedIn login successful, URL: %s", current_url)
+    elif "checkpoint" in current_url or "challenge" in current_url:
+        logger.warning("Security challenge detected at %s -- manual intervention needed", current_url)
+        # Wait up to 60 seconds for user to solve challenge
+        for _ in range(12):
+            await page.wait_for_timeout(5000)
+            if "feed" in page.url:
+                logger.info("Challenge resolved, now on feed")
+                return
+        raise RuntimeError(f"Login stuck at security challenge: {current_url}")
     else:
-        logger.warning("Unexpected post-login URL: %s", page.url)
+        raise RuntimeError(f"Login failed -- unexpected URL: {current_url}")
 
 
 async def goto_page(page, url: str, wait_seconds: float = 2) -> None:
     """Navigate to a URL with human-like delay."""
-    await page.goto(url)
-    await page.wait_for_load_state("networkidle")
+    await page.goto(url, wait_until="domcontentloaded")
     await page.wait_for_timeout(int(wait_seconds * 1000))

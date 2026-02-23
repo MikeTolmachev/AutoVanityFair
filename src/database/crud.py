@@ -215,11 +215,12 @@ class ContentLibraryCRUD:
         content: str,
         source: Optional[str] = None,
         tags: Optional[list[str]] = None,
+        personal_thoughts: Optional[str] = None,
     ) -> int:
         with self.db.connect() as conn:
             cursor = conn.execute(
-                "INSERT INTO content_library (title, content, source, tags) VALUES (?, ?, ?, ?)",
-                (title, content, source, json.dumps(tags) if tags else None),
+                "INSERT INTO content_library (title, content, source, tags, personal_thoughts) VALUES (?, ?, ?, ?, ?)",
+                (title, content, source, json.dumps(tags) if tags else None, personal_thoughts),
             )
             return cursor.lastrowid
 
@@ -246,6 +247,20 @@ class ContentLibraryCRUD:
         with self.db.connect() as conn:
             row = conn.execute("SELECT COUNT(*) as cnt FROM content_library").fetchone()
             return row["cnt"]
+
+    def update_personal_thoughts(self, doc_id: int, thoughts: str) -> None:
+        with self.db.connect() as conn:
+            conn.execute(
+                "UPDATE content_library SET personal_thoughts = ?, updated_at = datetime('now') WHERE id = ?",
+                (thoughts, doc_id),
+            )
+
+    def update_generated_post(self, doc_id: int, title: str, post: str) -> None:
+        with self.db.connect() as conn:
+            conn.execute(
+                "UPDATE content_library SET generated_title = ?, generated_post = ?, updated_at = datetime('now') WHERE id = ?",
+                (title, post, doc_id),
+            )
 
 
 class FeedItemCRUD:

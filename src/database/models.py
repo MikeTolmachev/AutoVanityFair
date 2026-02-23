@@ -51,7 +51,11 @@ CREATE TABLE IF NOT EXISTS content_library (
     content TEXT NOT NULL,
     source TEXT,
     tags TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    personal_thoughts TEXT,
+    generated_title TEXT,
+    generated_post TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS config (
@@ -94,7 +98,25 @@ class Database:
     def _init_schema(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            self._migrate(conn)
             logger.info("Database schema initialized at %s", self.db_path)
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """Add columns that may be missing on older databases."""
+        existing = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(content_library)").fetchall()
+        }
+        migrations = {
+            "personal_thoughts": "ALTER TABLE content_library ADD COLUMN personal_thoughts TEXT",
+            "generated_title": "ALTER TABLE content_library ADD COLUMN generated_title TEXT",
+            "generated_post": "ALTER TABLE content_library ADD COLUMN generated_post TEXT",
+            "updated_at": "ALTER TABLE content_library ADD COLUMN updated_at TEXT",
+        }
+        for col, sql in migrations.items():
+            if col not in existing:
+                conn.execute(sql)
 
     @contextmanager
     def connect(self) -> Generator[sqlite3.Connection, None, None]:
