@@ -236,7 +236,7 @@ def _run_smart_search(
                 f"- {p['content'][:150]}" for p in past_posts[:5]
             )
             posts_list = "\n\n".join(
-                f"[{i}] {r.author}: {r.content[:200]}"
+                f"[{i}] {r.author} (posted: {r.published_at or 'unknown'}): {r.content[:200]}"
                 for i, r in enumerate(raw_results)
             )
             rank_result = ai.generate_fast(
@@ -280,6 +280,7 @@ def _run_smart_search(
                             "author": r.author,
                             "content": r.content,
                             "url": r.url,
+                            "published_at": r.published_at,
                             "relevance_score": score,
                             "reason": reason,
                         })

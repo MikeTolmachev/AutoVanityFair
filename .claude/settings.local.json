@@ -129,7 +129,11 @@
       "WebFetch(domain:linkedin-api.readthedocs.io)",
       "WebFetch(domain:nubela.co)",
       "WebFetch(domain:serpapi.com)",
-      "Bash(pip show:*)"
+      "Bash(pip show:*)",
+      "Bash(/Users/Mikhail_Tolmachev1/dev/OpenLinkedIn/.venv/bin/python3:*)",
+      "Bash(python:*)",
+      "Bash(which python3 && python3 -m pytest tests/test_content_filter.py -v 2>&1)",
+      "Bash(.venv/bin/python:*)"
     ]
   }
 }

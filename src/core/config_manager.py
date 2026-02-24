@@ -87,6 +87,7 @@ class AggregationConfig(BaseModel):
     default_priorities: list[int] = [1, 2]
     schedule_interval_hours: int = 6
     auto_save_threshold: float = 35.0
+    max_age_months: int = 3
 
 
 class AppConfig(BaseModel):

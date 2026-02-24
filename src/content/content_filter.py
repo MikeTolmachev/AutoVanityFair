@@ -65,12 +65,15 @@ class ScoredContent:
     source: str = ""
     author: str = ""
 
+    published_at: Optional[str] = None
+
     # Scoring results
     production_score: float = 0.0
     executive_score: float = 0.0
     keyword_score: float = 0.0
     content_type: ContentType = ContentType.GENERAL
     type_multiplier: float = 1.0
+    freshness_multiplier: float = 1.0
     final_score: float = 0.0
 
     matched_keywords: list[str] = field(default_factory=list)
@@ -94,11 +97,21 @@ class ContentFilter:
         self,
         min_score_threshold: float = 10.0,
         enable_executive_filter: bool = True,
+        max_age_months: int = 3,
     ):
         self.min_score_threshold = min_score_threshold
         self.enable_executive_filter = enable_executive_filter
+        self.max_age_months = max_age_months
 
-    def score(self, title: str, content: str, url: str = "", source: str = "", author: str = "") -> ScoredContent:
+    def score(
+        self,
+        title: str,
+        content: str,
+        url: str = "",
+        source: str = "",
+        author: str = "",
+        published_at: Optional[str] = None,
+    ) -> ScoredContent:
         """Run all scoring stages and return a ScoredContent object."""
         combined_text = f"{title} {content}"
 
@@ -108,6 +121,7 @@ class ContentFilter:
             url=url,
             source=source,
             author=author,
+            published_at=published_at,
         )
 
         # Stage 1: Production relevance
@@ -127,13 +141,18 @@ class ContentFilter:
         scored.matched_keywords = self._find_matched_keywords(combined_text)
         scored.matched_categories = self._find_matched_categories(combined_text)
 
+        # Freshness
+        scored.freshness_multiplier = self._calculate_freshness(published_at)
+
         # Final composite score (business-applied weighting)
         base_score = (
             scored.production_score * 0.30
             + scored.executive_score * 0.35
             + scored.keyword_score * 0.35
         )
-        scored.final_score = round(base_score * scored.type_multiplier, 2)
+        scored.final_score = round(
+            base_score * scored.type_multiplier * scored.freshness_multiplier, 2
+        )
 
         return scored
 
@@ -155,12 +174,34 @@ class ContentFilter:
                 url=item.get("url", ""),
                 source=item.get("source", ""),
                 author=item.get("author", ""),
+                published_at=item.get("published_at"),
             )
             if scored.final_score >= self.min_score_threshold:
                 scored_items.append(scored)
 
         scored_items.sort(key=lambda x: x.final_score, reverse=True)
         return scored_items[:max_results]
+
+    # ------------------------------------------------------------------
+    # Freshness penalty
+    # ------------------------------------------------------------------
+    def _calculate_freshness(self, published_at: Optional[str]) -> float:
+        """Return a freshness multiplier in [0.1, 1.0].
+
+        Penalises 25% per month after the first month.
+        Missing or unparseable dates default to 1.0 (no penalty).
+        """
+        if not published_at:
+            return 1.0
+
+        from src.utils.helpers import parse_published_date, months_ago
+
+        dt = parse_published_date(published_at)
+        if dt is None:
+            return 1.0
+
+        age = months_ago(dt)
+        return round(min(1.0, max(0.1, 1.0 - (age - 1) * 0.25)), 4)
 
     # ------------------------------------------------------------------
     # Stage 1: Production-Relevance Scoring

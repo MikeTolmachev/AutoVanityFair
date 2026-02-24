@@ -473,6 +473,7 @@ class RSSAggregator:
                 "url": item.url,
                 "source": item.source_name,
                 "author": item.author,
+                "published_at": item.published_at,
             }
             for item in raw_items
         ]

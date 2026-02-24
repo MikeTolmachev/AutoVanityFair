@@ -152,10 +152,20 @@ def _render_scored_item(
         col_title, col_score = st.columns([4, 1])
         with col_title:
             st.markdown(f"**{item.title}**")
+            freshness_badge = ""
+            if item.freshness_multiplier < 1.0:
+                from src.utils.helpers import parse_published_date, months_ago
+                dt = parse_published_date(item.published_at) if item.published_at else None
+                if dt:
+                    age = months_ago(dt)
+                    freshness_badge = f" | Age: {age:.0f}mo, {item.freshness_multiplier}x"
+                else:
+                    freshness_badge = f" | Freshness: {item.freshness_multiplier}x"
             st.caption(
                 f"Source: {item.source} | "
                 f"Type: {item.content_type.value} | "
                 f"Multiplier: {item.type_multiplier}x"
+                f"{freshness_badge}"
             )
         with col_score:
             score_color = (
@@ -167,13 +177,15 @@ def _render_scored_item(
 
         # Score breakdown
         with st.expander("Score Details"):
-            col_a, col_b, col_c = st.columns(3)
+            col_a, col_b, col_c, col_d = st.columns(4)
             with col_a:
                 st.caption(f"Production: {item.production_score:.1f}")
             with col_b:
                 st.caption(f"Executive: {item.executive_score:.1f}")
             with col_c:
                 st.caption(f"Keyword: {item.keyword_score:.1f}")
+            with col_d:
+                st.caption(f"Freshness: {item.freshness_multiplier}x")
 
             if item.matched_keywords:
                 st.caption(f"Keywords: {', '.join(item.matched_keywords[:8])}")

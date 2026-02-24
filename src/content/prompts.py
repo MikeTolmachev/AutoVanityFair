@@ -141,6 +141,8 @@ Return ONLY the queries, one per line, no numbering or explanation:"""
 
 RANK_SEARCH_RESULTS_PROMPT = """I found these LinkedIn posts. Rank them by how well they match my expertise and how much value I could add as a commenter. Only include posts worth commenting on.
 
+IMPORTANT: Strongly penalize stale posts. Posts older than 2 months are less valuable, and posts older than 4 months should almost never be recommended. Prefer recent content (< 1 month old).
+
 My expertise (from my published posts):
 {expertise_summary}
 

@@ -59,3 +59,4 @@ aggregation:
   default_priorities: [1, 2]
   schedule_interval_hours: 6
   auto_save_threshold: 35.0
+  max_age_months: 3

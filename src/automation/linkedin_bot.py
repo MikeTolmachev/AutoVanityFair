@@ -21,6 +21,7 @@ class LinkedInSearchResult:
     content: str = ""
     url: str = ""
     likes: int = 0
+    published_at: str = ""
 
 
 class LinkedInBot:
@@ -383,8 +384,20 @@ class LinkedInBot:
                 const qIdx = url.indexOf('?');
                 if (qIdx > 0) url = url.substring(0, qIdx);
 
+                // Try to extract a relative timestamp (e.g. "2w", "1mo", "3d")
+                let publishedAt = '';
+                const timeEl = container.querySelector('time');
+                if (timeEl) {
+                    // Prefer the datetime attribute (ISO 8601)
+                    publishedAt = timeEl.getAttribute('datetime') || timeEl.innerText.trim();
+                } else {
+                    // Fallback: look for short tokens like "2w", "1mo", "3d"
+                    const timeMatch = fullText.match(/\b(\d+(?:s|m|mi|min|h|hr|d|w|mo|yr))\b/i);
+                    if (timeMatch) publishedAt = timeMatch[1];
+                }
+
                 if (content.length > 20) {
-                    posts.push({ author, content: content.substring(0, 500), url });
+                    posts.push({ author, content: content.substring(0, 500), url, publishedAt });
                 }
             }
 
@@ -402,6 +415,7 @@ class LinkedInBot:
                 author=p.get("author", ""),
                 content=p.get("content", ""),
                 url=url,
+                published_at=p.get("publishedAt", ""),
             ))
 
         logger.info("Extracted %d search results for '%s'", len(results), query)
