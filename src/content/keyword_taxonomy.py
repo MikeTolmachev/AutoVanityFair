@@ -77,6 +77,7 @@ LLM_GENAI = KeywordCategory(
     keywords=(
         "large language models", "LLMs", "foundation models", "frontier models",
         "GPT", "Claude", "Llama", "Mistral", "Gemini", "open weight models",
+        "Qwen", "ERNIE", "DeepSeek", "Hunyuan", "SenseNova", "iFlytek Spark",
         "retrieval augmented generation", "RAG", "vector search", "semantic search",
         "prompt engineering", "few-shot learning", "in-context learning",
         "fine-tuning", "LoRA", "QLoRA", "PEFT", "parameter-efficient fine-tuning",

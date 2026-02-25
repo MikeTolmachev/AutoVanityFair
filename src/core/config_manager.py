@@ -10,8 +10,8 @@ from pydantic import BaseModel, Field
 
 class OpenAIConfig(BaseModel):
     api_key: str = ""
-    model: str = "gpt-4o"
-    fast_model: str = "gpt-4o-mini"
+    model: str = "gpt-5.2-pro"
+    fast_model: str = "gpt-5-nano"
     max_tokens: int = 1024
     temperature: float = 0.7
 
@@ -78,6 +78,13 @@ class RAGConfig(BaseModel):
     max_context_docs: int = 3
 
 
+class VertexAIConfig(BaseModel):
+    project_id: str = ""
+    location: str = "us-central1"
+    imagen_model: str = "gemini-3-pro-image-preview"
+    veo_model: str = "veo-3.1-generate-001"
+
+
 class AggregationConfig(BaseModel):
     enabled: bool = True
     fetch_timeout: int = 15
@@ -98,6 +105,7 @@ class AppConfig(BaseModel):
     paths: PathsConfig = PathsConfig()
     rag: RAGConfig = RAGConfig()
     aggregation: AggregationConfig = AggregationConfig()
+    vertex_ai: VertexAIConfig = VertexAIConfig()
 
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{(\w+)\}")
@@ -177,3 +185,7 @@ class ConfigManager:
     @property
     def aggregation(self) -> AggregationConfig:
         return self.config.aggregation
+
+    @property
+    def vertex_ai(self) -> VertexAIConfig:
+        return self.config.vertex_ai

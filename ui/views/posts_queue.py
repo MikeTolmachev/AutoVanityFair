@@ -6,10 +6,11 @@ After publishing, optionally posts a first comment with the source article link.
 """
 
 import json
+import os
 import streamlit as st
 from typing import Optional
 
-from src.core.config_manager import LinkedInConfig
+from src.core.config_manager import LinkedInConfig, VertexAIConfig
 from src.database.crud import PostCRUD, InteractionLogCRUD, ContentLibraryCRUD
 from ui.components.editor import render_editor
 
@@ -19,6 +20,7 @@ def render_posts_queue(
     log_crud: Optional[InteractionLogCRUD] = None,
     linkedin_config: Optional[LinkedInConfig] = None,
     content_crud: Optional[ContentLibraryCRUD] = None,
+    vertex_ai_config: Optional[VertexAIConfig] = None,
 ):
     st.header("Posts Queue")
 
@@ -54,7 +56,7 @@ def render_posts_queue(
     st.caption(f"Showing {len(posts)} {status_filter} posts")
 
     for post in posts:
-        _render_post_card(post, post_crud, log_crud, linkedin_config, content_crud)
+        _render_post_card(post, post_crud, log_crud, linkedin_config, content_crud, vertex_ai_config)
 
 
 def _render_post_card(
@@ -63,6 +65,7 @@ def _render_post_card(
     log_crud: Optional[InteractionLogCRUD],
     linkedin_config: Optional[LinkedInConfig],
     content_crud: Optional[ContentLibraryCRUD],
+    vertex_ai_config: Optional[VertexAIConfig] = None,
 ):
     with st.container(border=True):
         col_meta, col_status = st.columns([3, 1])
@@ -108,7 +111,10 @@ def _render_post_card(
                     st.rerun()
 
         elif status == "approved":
-            col1, col2, col3 = st.columns(3)
+            # --- Asset attachment section ---
+            _render_asset_section(post, post_crud, vertex_ai_config)
+
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
                 if st.button(
                     "Publish to LinkedIn",
@@ -124,9 +130,15 @@ def _render_post_card(
                 if st.button("Reject", key=f"reject_approved_{post['id']}"):
                     post_crud.update_status(post["id"], "rejected", reason="Rejected in UI")
                     st.rerun()
+            with col4:
+                if st.button("Mark as Posted", key=f"mark_published_{post['id']}"):
+                    post_crud.update_status(post["id"], "published")
+                    if log_crud:
+                        log_crud.log("manual_mark_published", details=f"Post #{post['id']} manually marked as published")
+                    st.rerun()
 
         elif status == "published":
-            col1, col2 = st.columns([1, 3])
+            col1, col2, col3 = st.columns([1, 1, 3])
             with col1:
                 if st.button("Repost", key=f"repost_{post['id']}"):
                     post_crud.update_status(post["id"], "approved")
@@ -134,6 +146,12 @@ def _render_post_card(
                         log_crud.log("repost", details=f"Post #{post['id']} reset to approved for reposting")
                     st.rerun()
             with col2:
+                if st.button("Unmark", key=f"unmark_{post['id']}"):
+                    post_crud.update_status(post["id"], "approved")
+                    if log_crud:
+                        log_crud.log("manual_unmark_published", details=f"Post #{post['id']} unmarked as published")
+                    st.rerun()
+            with col3:
                 published_at = post.get("published_at", "")
                 if post.get("linkedin_url"):
                     st.caption(f"Published: {published_at} | [View on LinkedIn]({post['linkedin_url']})")
@@ -144,6 +162,116 @@ def _render_post_card(
             if st.button("Move back to draft", key=f"undraft_{post['id']}"):
                 post_crud.update_status(post["id"], "draft")
                 st.rerun()
+
+
+def _render_asset_section(
+    post: dict,
+    post_crud: PostCRUD,
+    vertex_ai_config: Optional[VertexAIConfig],
+):
+    """Render asset upload / generate section for an approved post."""
+    post_id = post["id"]
+    asset_path = post.get("asset_path")
+    asset_type = post.get("asset_type")
+
+    with st.expander("Post Asset (image / video)", expanded=bool(asset_path)):
+        # Show current asset if attached
+        if asset_path and os.path.exists(asset_path):
+            if asset_type == "video":
+                st.video(asset_path)
+            else:
+                st.image(asset_path, width=400)
+            if st.button("Remove Asset", key=f"remove_asset_{post_id}"):
+                post_crud.clear_asset(post_id)
+                st.rerun()
+        elif asset_path:
+            st.warning(f"Asset file missing: {asset_path}")
+            post_crud.clear_asset(post_id)
+
+        tab_upload, tab_imagen, tab_veo = st.tabs(["Upload File", "Generate Image (Imagen)", "Generate Video (Veo)"])
+
+        with tab_upload:
+            uploaded = st.file_uploader(
+                "Upload image or video",
+                type=["png", "jpg", "jpeg", "mp4"],
+                key=f"upload_{post_id}",
+            )
+            if uploaded is not None:
+                ext = uploaded.name.rsplit(".", 1)[-1].lower()
+                a_type = "video" if ext == "mp4" else "image"
+                os.makedirs("data/assets", exist_ok=True)
+                save_path = f"data/assets/post_{post_id}.{ext}"
+                with open(save_path, "wb") as f:
+                    f.write(uploaded.getbuffer())
+                post_crud.set_asset(post_id, save_path, a_type)
+                st.success(f"Saved {a_type}: {save_path}")
+                st.rerun()
+
+        with tab_imagen:
+            img_prompt = st.text_input(
+                "Image prompt",
+                placeholder="Professional illustration of AI deployment pipeline...",
+                key=f"img_prompt_{post_id}",
+            )
+            img_ratio = st.selectbox(
+                "Aspect ratio",
+                ["1:1", "16:9", "9:16", "4:3"],
+                key=f"img_ratio_{post_id}",
+            )
+            if st.button("Generate Image", key=f"gen_img_{post_id}", disabled=not vertex_ai_config or not vertex_ai_config.project_id):
+                if not img_prompt.strip():
+                    st.warning("Enter a prompt first.")
+                else:
+                    with st.status("Generating image with Imagen..."):
+                        try:
+                            from src.content.asset_generator import AssetGenerator
+
+                            gen = AssetGenerator(
+                                project_id=vertex_ai_config.project_id,
+                                location=vertex_ai_config.location,
+                                imagen_model=vertex_ai_config.imagen_model,
+                            )
+                            path = gen.generate_image(img_prompt.strip(), aspect_ratio=img_ratio)
+                            post_crud.set_asset(post_id, path, "image")
+                            st.success(f"Image saved: {path}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Imagen error: {e}")
+            if not vertex_ai_config or not vertex_ai_config.project_id:
+                st.caption("Set GCP_PROJECT_ID in .env to enable Vertex AI generation.")
+
+        with tab_veo:
+            vid_prompt = st.text_input(
+                "Video prompt",
+                placeholder="Cinematic overview of modern data center with AI inference...",
+                key=f"vid_prompt_{post_id}",
+            )
+            vid_ratio = st.selectbox(
+                "Aspect ratio",
+                ["16:9", "9:16", "1:1"],
+                key=f"vid_ratio_{post_id}",
+            )
+            if st.button("Generate Video", key=f"gen_vid_{post_id}", disabled=not vertex_ai_config or not vertex_ai_config.project_id):
+                if not vid_prompt.strip():
+                    st.warning("Enter a prompt first.")
+                else:
+                    with st.status("Generating video with Veo (this may take a while)..."):
+                        try:
+                            from src.content.asset_generator import AssetGenerator
+
+                            gen = AssetGenerator(
+                                project_id=vertex_ai_config.project_id,
+                                location=vertex_ai_config.location,
+                                veo_model=vertex_ai_config.veo_model,
+                            )
+                            path = gen.generate_video(vid_prompt.strip(), aspect_ratio=vid_ratio)
+                            post_crud.set_asset(post_id, path, "video")
+                            st.success(f"Video saved: {path}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Veo error: {e}")
+            if not vertex_ai_config or not vertex_ai_config.project_id:
+                st.caption("Set GCP_PROJECT_ID in .env to enable Vertex AI generation.")
 
 
 def _get_source_url(post: dict, content_crud: Optional[ContentLibraryCRUD]) -> Optional[str]:

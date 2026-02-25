@@ -85,6 +85,20 @@ class PostCRUD:
             ).fetchone()
             return row["cnt"]
 
+    def set_asset(self, post_id: int, asset_path: str, asset_type: str) -> None:
+        with self.db.connect() as conn:
+            conn.execute(
+                "UPDATE posts SET asset_path = ?, asset_type = ?, updated_at = datetime('now') WHERE id = ?",
+                (asset_path, asset_type, post_id),
+            )
+
+    def clear_asset(self, post_id: int) -> None:
+        with self.db.connect() as conn:
+            conn.execute(
+                "UPDATE posts SET asset_path = NULL, asset_type = NULL, updated_at = datetime('now') WHERE id = ?",
+                (post_id,),
+            )
+
 
 class CommentCRUD:
     def __init__(self, db: Database):
@@ -352,3 +366,126 @@ class FeedItemCRUD:
                 "SELECT source_name, COUNT(*) as cnt FROM feed_items GROUP BY source_name"
             ).fetchall()
             return {r["source_name"]: r["cnt"] for r in rows}
+
+    def get_liked_items(self, limit: int = 100) -> list[dict]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """SELECT fi.* FROM feed_items fi
+                   JOIN user_feedback uf ON fi.id = uf.feed_item_id
+                   WHERE uf.feedback = 'liked'
+                   ORDER BY fi.final_score DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_by_hash(self, item_hash: str) -> Optional[dict]:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM feed_items WHERE item_hash = ?", (item_hash,)
+            ).fetchone()
+            return dict(row) if row else None
+
+
+class FeedbackCRUD:
+    def __init__(self, db: Database):
+        self.db = db
+
+    def set_feedback(self, feed_item_id: int, item_hash: str, feedback: str) -> None:
+        with self.db.connect() as conn:
+            conn.execute(
+                """INSERT INTO user_feedback (feed_item_id, item_hash, feedback)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(feed_item_id) DO UPDATE SET
+                    feedback = excluded.feedback,
+                    created_at = datetime('now')""",
+                (feed_item_id, item_hash, feedback),
+            )
+
+    def get_feedback(self, feed_item_id: int) -> Optional[str]:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "SELECT feedback FROM user_feedback WHERE feed_item_id = ?",
+                (feed_item_id,),
+            ).fetchone()
+            return row["feedback"] if row else None
+
+    def get_feedback_map(self) -> dict[str, str]:
+        """Return {item_hash: feedback} for all feedback entries."""
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                "SELECT item_hash, feedback FROM user_feedback"
+            ).fetchall()
+            return {r["item_hash"]: r["feedback"] for r in rows}
+
+    def get_all_feedback_with_features(self) -> list[dict]:
+        """Return feedback joined with feed item features for training."""
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """SELECT fi.*, uf.feedback
+                   FROM user_feedback uf
+                   JOIN feed_items fi ON fi.id = uf.feed_item_id"""
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_liked_item_hashes(self) -> set[str]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                "SELECT item_hash FROM user_feedback WHERE feedback = 'liked'"
+            ).fetchall()
+            return {r["item_hash"] for r in rows}
+
+    def count_feedback(self) -> dict[str, int]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                "SELECT feedback, COUNT(*) as cnt FROM user_feedback GROUP BY feedback"
+            ).fetchall()
+            return {r["feedback"]: r["cnt"] for r in rows}
+
+    def get_published_item_hashes(self) -> set[str]:
+        """Return item_hashes of feed items that were used for publishing.
+
+        A feed item is considered "used for publishing" when a matching
+        content_library entry (joined on URL) has a generated_post.
+        """
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """SELECT fi.item_hash
+                   FROM feed_items fi
+                   JOIN content_library cl
+                     ON fi.url != '' AND fi.url = cl.source
+                   WHERE cl.generated_post IS NOT NULL
+                     AND cl.generated_post != ''"""
+            ).fetchall()
+            return {r["item_hash"] for r in rows}
+
+    def get_all_training_data(self) -> list[dict]:
+        """Return feedback + published-item data for reranker training.
+
+        Includes explicit user feedback AND feed items used for publishing
+        (treated as positive signal).
+        """
+        with self.db.connect() as conn:
+            # Explicit feedback
+            rows = conn.execute(
+                """SELECT fi.*, uf.feedback
+                   FROM user_feedback uf
+                   JOIN feed_items fi ON fi.id = uf.feed_item_id"""
+            ).fetchall()
+            result = [dict(r) for r in rows]
+
+            # Published items without explicit feedback (implicit positive)
+            existing_hashes = {r["item_hash"] for r in result}
+            pub_rows = conn.execute(
+                """SELECT fi.*, 'liked' AS feedback
+                   FROM feed_items fi
+                   JOIN content_library cl
+                     ON fi.url != '' AND fi.url = cl.source
+                   WHERE cl.generated_post IS NOT NULL
+                     AND cl.generated_post != ''"""
+            ).fetchall()
+            for r in pub_rows:
+                row = dict(r)
+                if row["item_hash"] not in existing_hashes:
+                    result.append(row)
+
+            return result

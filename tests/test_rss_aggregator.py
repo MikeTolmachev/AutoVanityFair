@@ -11,6 +11,7 @@ from src.content.rss_aggregator import (
     PRIORITY_2_FEEDS,
     PRIORITY_3_FEEDS,
     PRIORITY_4_FEEDS,
+    CHINESE_AI_FEEDS,
 )
 from src.content.content_filter import ContentFilter
 
@@ -141,7 +142,7 @@ class TestFeedSources:
     def test_all_feeds_populated(self):
         assert len(ALL_FEEDS) > 0
         assert len(ALL_FEEDS) == (
-            len(PRIORITY_1_FEEDS) + len(PRIORITY_2_FEEDS)
+            len(PRIORITY_1_FEEDS) + len(PRIORITY_2_FEEDS) + len(CHINESE_AI_FEEDS)
             + len(PRIORITY_3_FEEDS) + len(PRIORITY_4_FEEDS)
         )
 

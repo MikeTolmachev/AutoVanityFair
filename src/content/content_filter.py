@@ -83,6 +83,24 @@ class ScoredContent:
         self.matched_keywords = list(self.matched_keywords)
         self.matched_categories = list(self.matched_categories)
 
+    def to_feature_dict(self) -> dict:
+        """Extract feature vector for ML reranker."""
+        return {
+            "production_score": self.production_score,
+            "executive_score": self.executive_score,
+            "keyword_score": self.keyword_score,
+            "type_multiplier": self.type_multiplier,
+            "freshness_multiplier": self.freshness_multiplier,
+            "title_length": len(self.title.split()),
+            "content_length": len(self.content.split()),
+            "num_matched_keywords": len(self.matched_keywords),
+            "num_matched_categories": len(self.matched_categories),
+            "has_url": 1 if self.url else 0,
+            "rule_based_score": self.final_score,
+            "content_type": self.content_type.value,
+            "source": self.source,
+        }
+
 
 class ContentFilter:
     """
@@ -160,13 +178,20 @@ class ContentFilter:
         self,
         items: list[dict],
         max_results: int = 20,
+        min_results: int = 100,
     ) -> list[ScoredContent]:
         """Score, filter, and rank a list of content items.
 
         Each item dict should have at least 'title' and 'content' keys.
         Optional: 'url', 'source', 'author'.
+
+        If fewer than *min_results* items pass the score threshold, the
+        remaining slots are filled with the next-best items so the reranker
+        always has enough examples to learn from.
         """
-        scored_items = []
+        above_threshold: list[ScoredContent] = []
+        below_threshold: list[ScoredContent] = []
+
         for item in items:
             scored = self.score(
                 title=item.get("title", ""),
@@ -177,10 +202,20 @@ class ContentFilter:
                 published_at=item.get("published_at"),
             )
             if scored.final_score >= self.min_score_threshold:
-                scored_items.append(scored)
+                above_threshold.append(scored)
+            else:
+                below_threshold.append(scored)
 
-        scored_items.sort(key=lambda x: x.final_score, reverse=True)
-        return scored_items[:max_results]
+        above_threshold.sort(key=lambda x: x.final_score, reverse=True)
+
+        # Ensure at least min_results items for the reranker
+        target = max(max_results, min_results)
+        if len(above_threshold) < target and below_threshold:
+            below_threshold.sort(key=lambda x: x.final_score, reverse=True)
+            need = target - len(above_threshold)
+            above_threshold.extend(below_threshold[:need])
+
+        return above_threshold[:target]
 
     # ------------------------------------------------------------------
     # Freshness penalty

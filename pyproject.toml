@@ -21,6 +21,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "tenacity>=8.2",
     "termcolor>=2.4",
+    "catboost>=1.2",
 ]
 
 [project.optional-dependencies]

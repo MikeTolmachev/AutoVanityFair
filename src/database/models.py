@@ -17,7 +17,9 @@ CREATE TABLE IF NOT EXISTS posts (
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now')),
     published_at TEXT,
-    rejection_reason TEXT
+    rejection_reason TEXT,
+    asset_path TEXT,
+    asset_type TEXT
 );
 
 CREATE TABLE IF NOT EXISTS comments (
@@ -84,6 +86,17 @@ CREATE TABLE IF NOT EXISTS feed_items (
     saved_to_library INTEGER DEFAULT 0,
     fetched_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS user_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    feed_item_id INTEGER NOT NULL,
+    item_hash TEXT NOT NULL,
+    feedback TEXT NOT NULL CHECK(feedback IN ('liked', 'disliked')),
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (feed_item_id) REFERENCES feed_items(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_feedback_item ON user_feedback(feed_item_id);
 """
 
 
@@ -104,6 +117,7 @@ class Database:
     @staticmethod
     def _migrate(conn: sqlite3.Connection) -> None:
         """Add columns that may be missing on older databases."""
+        # content_library migrations
         existing = {
             row[1]
             for row in conn.execute("PRAGMA table_info(content_library)").fetchall()
@@ -116,6 +130,19 @@ class Database:
         }
         for col, sql in migrations.items():
             if col not in existing:
+                conn.execute(sql)
+
+        # posts migrations
+        posts_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(posts)").fetchall()
+        }
+        posts_migrations = {
+            "asset_path": "ALTER TABLE posts ADD COLUMN asset_path TEXT",
+            "asset_type": "ALTER TABLE posts ADD COLUMN asset_type TEXT",
+        }
+        for col, sql in posts_migrations.items():
+            if col not in posts_cols:
                 conn.execute(sql)
 
     @contextmanager

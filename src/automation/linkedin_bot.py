@@ -3,6 +3,7 @@ LinkedInBot -- high-level LinkedIn actions with robust selectors and logging.
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -12,6 +13,28 @@ from src.automation.feed_scraper import FeedScraper, FeedPost
 from src.core.safety_monitor import SafetyMonitor
 
 logger = logging.getLogger("openlinkedin.bot")
+
+
+def strip_linkedin_markdown(text: str) -> str:
+    """Convert markdown-formatted text to LinkedIn-compatible plain text.
+
+    LinkedIn's editor does not render markdown, so asterisks and hashes
+    appear literally.  This function strips them while preserving structure.
+    """
+    # Bold + italic (***text*** or ___text___)
+    text = re.sub(r"\*{3}(.+?)\*{3}", r"\1", text)
+    text = re.sub(r"_{3}(.+?)_{3}", r"\1", text)
+    # Bold (**text** or __text__)
+    text = re.sub(r"\*{2}(.+?)\*{2}", r"\1", text)
+    text = re.sub(r"_{2}(.+?)_{2}", r"\1", text)
+    # Italic (*text* or _text_) -- avoid matching bullet lines
+    text = re.sub(r"(?<!\w)\*([^\s*].*?[^\s*])\*(?!\w)", r"\1", text)
+    text = re.sub(r"(?<!\w)_([^\s_].*?[^\s_])_(?!\w)", r"\1", text)
+    # Headers (## Title)
+    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+    # Markdown bullet lists (* item or - item at line start) → bullet
+    text = re.sub(r"^[\*\-]\s+", "• ", text, flags=re.MULTILINE)
+    return text
 
 
 @dataclass
@@ -47,11 +70,14 @@ class LinkedInBot:
             self.safety.record_error()
             raise
 
-    async def publish_post(self, content: str) -> bool:
-        """Publish a text post to LinkedIn."""
+    async def publish_post(self, content: str, asset_path: str = "") -> bool:
+        """Publish a post to LinkedIn, optionally with a media attachment."""
         if not self.safety.can_act():
             logger.warning("Safety monitor blocked post publishing")
             return False
+
+        # Strip markdown so LinkedIn doesn't show raw asterisks/hashes
+        content = strip_linkedin_markdown(content)
 
         page = self.session.page
 
@@ -115,6 +141,41 @@ class LinkedInBot:
 
         await editor.click()
         await page.wait_for_timeout(500)
+
+        # Upload media asset if provided
+        if asset_path:
+            logger.info("Uploading media asset: %s", asset_path)
+            try:
+                media_selectors = [
+                    'button[aria-label*="Add media"]',
+                    'button[aria-label*="Add a photo"]',
+                    'button[aria-label*="photo"]',
+                    'button.share-creation-state__action-button:has(li-icon[type="image"])',
+                ]
+                media_clicked = False
+                for sel in media_selectors:
+                    try:
+                        el = page.locator(sel).first
+                        if await el.is_visible(timeout=2000):
+                            await el.click()
+                            media_clicked = True
+                            logger.info("Clicked media button via: %s", sel)
+                            break
+                    except Exception:
+                        continue
+
+                if media_clicked:
+                    await page.wait_for_timeout(1500)
+                    # LinkedIn uses a hidden file input for uploads
+                    file_input = page.locator('input[type="file"]').first
+                    await file_input.set_input_files(asset_path)
+                    logger.info("File selected, waiting for upload...")
+                    # Wait for the upload to process
+                    await page.wait_for_timeout(5000)
+                else:
+                    logger.warning("Could not find media upload button, posting without asset")
+            except Exception as e:
+                logger.warning("Media upload failed, posting without asset: %s", e)
 
         # Type content with human-like speed
         logger.info("Step 4: Typing post content (%d chars)...", len(content))

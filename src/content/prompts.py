@@ -5,7 +5,8 @@ POST_SYSTEM_PROMPT = """You are a professional LinkedIn content creator. Write e
 - End with a question or call-to-action to drive engagement
 - Avoid hashtag spam (max 3-5 relevant hashtags at the end)
 - Do NOT use placeholder text like [Your Name] or [Company]
-- Keep posts between 150-1300 characters"""
+- Keep posts between 150-1300 characters
+- IMPORTANT: Do NOT use any markdown formatting. No asterisks (*bold* or *italic*), no headers (#), no underscores for emphasis. LinkedIn renders plain text only. Use line breaks and Unicode bullets (•) for structure instead."""
 
 POST_TEMPLATES = {
     "model_review": """Write a LinkedIn post reviewing a recent AI model or technology.
@@ -52,7 +53,8 @@ LIBRARY_POST_SYSTEM_PROMPT = """You are a senior AI executive writing LinkedIn p
 - Max 3-5 relevant hashtags at the end
 - Keep posts between 200-1500 characters
 - Do NOT use placeholder text like [Your Name] or [Company]
-- Sound authentic, not like a summary -- add original insight"""
+- Sound authentic, not like a summary -- add original insight
+- IMPORTANT: Do NOT use any markdown formatting. No asterisks (*bold* or *italic*), no headers (#), no underscores for emphasis. LinkedIn renders plain text only. Use line breaks and Unicode bullets (•) for structure instead."""
 
 LIBRARY_POST_TEMPLATE = """Write a LinkedIn post based on the following article/content from my knowledge base.
 

@@ -128,7 +128,7 @@ PRIORITY_2_FEEDS: list[FeedSource] = [
 PRIORITY_3_FEEDS: list[FeedSource] = [
     FeedSource(
         name="Ray Blog",
-        url="https://www.ray.io/blog/rss.xml",
+        url="https://www.anyscale.com/rss.xml",
         source_type="rss",
         priority=3,
         category="Infrastructure & Deployment",
@@ -142,14 +142,14 @@ PRIORITY_3_FEEDS: list[FeedSource] = [
     ),
     FeedSource(
         name="Google Cloud AI Blog",
-        url="https://cloud.google.com/blog/products/ai-machine-learning/rss",
+        url="https://cloudblog.withgoogle.com/products/ai-machine-learning/rss/",
         source_type="rss",
         priority=3,
         category="Infrastructure & Deployment",
     ),
     FeedSource(
         name="Azure AI Blog",
-        url="https://azure.microsoft.com/en-us/blog/topics/ai/feed/",
+        url="https://azure.microsoft.com/en-us/blog/tag/ai/feed/",
         source_type="rss",
         priority=3,
         category="Infrastructure & Deployment",
@@ -181,7 +181,7 @@ PRIORITY_4_FEEDS: list[FeedSource] = [
     ),
     FeedSource(
         name="LlamaIndex Blog",
-        url="https://blog.llamaindex.ai/feed",
+        url="https://medium.com/feed/llamaindex-blog",
         source_type="rss",
         priority=4,
         category="Community & Discussion",
@@ -195,8 +195,76 @@ PRIORITY_4_FEEDS: list[FeedSource] = [
     ),
 ]
 
+# Priority 2: Chinese AI Models & Research
+CHINESE_AI_FEEDS: list[FeedSource] = [
+    FeedSource(
+        name="Tencent Hunyuan (GitHub)",
+        url="https://github.com/Tencent-Hunyuan.atom",
+        source_type="rss",
+        priority=2,
+        category="Chinese AI Models",
+    ),
+    FeedSource(
+        name="Qwen Blog",
+        url="https://qwenlm.github.io/blog/index.xml",
+        source_type="rss",
+        priority=2,
+        category="Chinese AI Models",
+    ),
+    FeedSource(
+        name="Baidu ERNIE (GitHub)",
+        url="https://github.com/PaddlePaddle/ERNIE/releases.atom",
+        source_type="rss",
+        priority=2,
+        category="Chinese AI Models",
+    ),
+    FeedSource(
+        name="DeepSeek (GitHub)",
+        url="https://github.com/deepseek-ai.atom",
+        source_type="rss",
+        priority=2,
+        category="Chinese AI Models",
+    ),
+    FeedSource(
+        name="Huawei",
+        url="https://www.huawei.com/en/rss-feeds/huawei-updates/rss",
+        source_type="rss",
+        priority=2,
+        category="Chinese AI Models",
+    ),
+    FeedSource(
+        name="SenseTime OpenMMLab (GitHub)",
+        url="https://github.com/open-mmlab.atom",
+        source_type="rss",
+        priority=2,
+        category="Chinese AI Models",
+    ),
+    FeedSource(
+        name="iFLYTEK (Google News)",
+        url="https://news.google.com/rss/search?q=iFLYTEK+AI&hl=en-US&gl=US&ceid=US:en",
+        source_type="rss",
+        priority=2,
+        category="Chinese AI Models",
+    ),
+    FeedSource(
+        name="Chinese AI (TechNode)",
+        url="https://technode.com/feed/",
+        source_type="rss",
+        priority=2,
+        category="Chinese AI Models",
+    ),
+    FeedSource(
+        name="Chinese AI (PandaDaily)",
+        url="https://pandaily.com/feed/",
+        source_type="rss",
+        priority=2,
+        category="Chinese AI Models",
+    ),
+]
+
 ALL_FEEDS: list[FeedSource] = (
-    PRIORITY_1_FEEDS + PRIORITY_2_FEEDS + PRIORITY_3_FEEDS + PRIORITY_4_FEEDS
+    PRIORITY_1_FEEDS + PRIORITY_2_FEEDS + CHINESE_AI_FEEDS
+    + PRIORITY_3_FEEDS + PRIORITY_4_FEEDS
 )
 
 

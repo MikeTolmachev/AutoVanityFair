@@ -133,7 +133,17 @@
       "Bash(/Users/Mikhail_Tolmachev1/dev/OpenLinkedIn/.venv/bin/python3:*)",
       "Bash(python:*)",
       "Bash(which python3 && python3 -m pytest tests/test_content_filter.py -v 2>&1)",
-      "Bash(.venv/bin/python:*)"
+      "Bash(.venv/bin/python:*)",
+      "WebFetch(domain:www.ray.io)",
+      "WebFetch(domain:www.anyscale.com)",
+      "WebFetch(domain:azure.microsoft.com)",
+      "WebFetch(domain:hnrss.org)",
+      "WebFetch(domain:www.llamaindex.ai)",
+      "Bash(curl:*)",
+      "Bash(echo === $url ===:*)",
+      "Bash(head:*)",
+      "Bash(pip install:*)",
+      "Bash(/Users/Mikhail_Tolmachev1/dev/OpenLinkedIn/.venv/bin/python:*)"
     ]
   }
 }
