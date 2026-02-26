@@ -26,6 +26,21 @@
 - `python main.py fetch-feeds` -- CLI feed aggregation
 - `.venv/bin/pytest tests/` -- run tests
 
+## Vertex AI / Asset Generation
+- Uses `google.genai` SDK (NOT old `vertexai.preview.vision_models`)
+- Imagen: `imagen-4.0-generate-001` via `client.models.generate_images()` -- verified working
+- Veo: `veo-3.1-generate-001` via `client.models.generate_videos()` (async, poll for completion)
+- Config model name may differ from what's actually available -- always check with `client.models.list()`
+- Fast model (`gpt-5-nano`): `ai.generate_fast()` for cheap tasks (asset prompt generation, ranking)
+- Generated assets saved to `data/assets/`, served at `/assets/` by FastAPI
+
+## Auth & Security
+- API auth via `OPENLINKEDIN_API_TOKEN` env var (bearer token); disabled when unset (local dev)
+- Frontend stores token in `localStorage`, prompts on 401
+- All user data in `innerHTML` must use `escapeHtml()`; URLs in `href` must use `safeUrl()`
+- API errors: log full exception server-side, return generic message to client
+- Limit params bounded with `Query(ge=1, le=500)`
+
 ## Code Style
 - Type hints on function signatures
 - CRUD classes wrap raw SQL (PostCRUD, CommentCRUD, etc.)
