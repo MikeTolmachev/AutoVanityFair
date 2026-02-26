@@ -393,6 +393,73 @@ def remove_post_asset(post_id: int):
     return {"ok": True}
 
 
+@app.post("/api/posts/{post_id}/generate-asset-prompt")
+def generate_asset_prompt(post_id: int):
+    """Use the fast model (nano) to generate an Imagen/Veo prompt from post content."""
+    config: ConfigManager = _get("config")
+    post_crud: PostCRUD = _get("post_crud")
+
+    post = post_crud.get(post_id)
+    if not post:
+        raise HTTPException(404, "Post not found")
+
+    try:
+        from src.content.generator import create_ai_provider
+
+        ai = create_ai_provider(config.ai)
+        result = ai.generate_fast(
+            "You are a visual prompt engineer. Generate a concise, vivid prompt for an AI image/video generator. "
+            "The image should be professional, suitable for LinkedIn, and visually complement the post content. "
+            "Output ONLY the prompt, nothing else. Keep it under 80 words.",
+            f"Generate a visual prompt for this LinkedIn post:\n\n{post['content'][:1500]}",
+        )
+        return {"prompt": result.content, "model": result.model}
+    except Exception as e:
+        logger.exception("Request failed")
+        raise HTTPException(500, "Internal server error")
+
+
+@app.post("/api/posts/{post_id}/asset/upload")
+async def upload_post_asset(post_id: int, request: Request):
+    """Upload an image or video file and attach to post."""
+    post_crud: PostCRUD = _get("post_crud")
+
+    post = post_crud.get(post_id)
+    if not post:
+        raise HTTPException(404, "Post not found")
+
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" not in content_type:
+        raise HTTPException(400, "Expected multipart/form-data")
+
+    try:
+        form = await request.form()
+        file = form.get("file")
+        if not file:
+            raise HTTPException(400, "No file uploaded")
+
+        filename = file.filename or "upload"
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if ext not in ("png", "jpg", "jpeg", "mp4", "webp"):
+            raise HTTPException(400, "Supported formats: png, jpg, jpeg, mp4, webp")
+
+        asset_type = "video" if ext == "mp4" else "image"
+        os.makedirs("data/assets", exist_ok=True)
+        save_path = f"data/assets/post_{post_id}.{ext}"
+
+        content = await file.read()
+        with open(save_path, "wb") as f:
+            f.write(content)
+
+        post_crud.set_asset(post_id, save_path, asset_type)
+        return {"ok": True, "path": save_path, "type": asset_type}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Request failed")
+        raise HTTPException(500, "Internal server error")
+
+
 # ---------------------------------------------------------------------------
 # Comments
 # ---------------------------------------------------------------------------

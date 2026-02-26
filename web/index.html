@@ -1521,10 +1521,11 @@ function renderPostCard(post, i) {
           <div style="margin-bottom:10px;font-size:0.8rem;color:var(--success)">Attached: ${escapeHtml(post.asset_type || 'file')} &mdash; ${escapeHtml(post.asset_path?.split('/').pop() || '')}</div>
           <button class="btn btn-sm btn-danger" onclick="removeAsset(${post.id})">Remove Asset</button>
         ` : `
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
             <div style="flex:1;min-width:200px">
               <input type="text" id="asset-prompt-${post.id}" placeholder="Describe the image or video..." style="font-size:0.8rem">
             </div>
+            <button class="btn btn-sm btn-secondary" onclick="autoGeneratePrompt(${post.id})" title="Auto-generate prompt using AI">Auto-Prompt</button>
             <select id="asset-ratio-${post.id}" style="width:80px;font-size:0.8rem">
               <option value="1:1">1:1</option>
               <option value="16:9">16:9</option>
@@ -1533,6 +1534,11 @@ function renderPostCard(post, i) {
             </select>
             <button class="btn btn-sm btn-secondary" onclick="generateImage(${post.id})">Imagen</button>
             <button class="btn btn-sm btn-secondary" onclick="generateVideo(${post.id})">Veo</button>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <label for="asset-upload-${post.id}" class="btn btn-sm btn-secondary" style="cursor:pointer;margin:0">Upload File</label>
+            <input type="file" id="asset-upload-${post.id}" accept="image/png,image/jpeg,image/webp,video/mp4" style="display:none" onchange="uploadAsset(${post.id},this)">
+            <span id="upload-status-${post.id}" style="font-size:0.72rem;color:var(--text-2)"></span>
           </div>
         `}
       </div>
@@ -1667,6 +1673,55 @@ async function removeAsset(postId) {
     navigate('posts');
   } catch (e) {
     toast(`Failed: ${e.message}`, 'error');
+  }
+}
+
+async function autoGeneratePrompt(postId) {
+  const input = document.getElementById(`asset-prompt-${postId}`);
+  if (!input) return;
+  input.value = 'Generating...';
+  input.disabled = true;
+  try {
+    const result = await api(`/posts/${postId}/generate-asset-prompt`, { method: 'POST' });
+    input.value = result.prompt;
+    toast(`Prompt generated (${result.model})`, 'success');
+  } catch (e) {
+    input.value = '';
+    toast(`Prompt generation failed: ${e.message}`, 'error');
+  } finally {
+    input.disabled = false;
+    input.focus();
+  }
+}
+
+async function uploadAsset(postId, fileInput) {
+  const file = fileInput.files?.[0];
+  if (!file) return;
+  const statusEl = document.getElementById(`upload-status-${postId}`);
+  if (statusEl) statusEl.textContent = 'Uploading...';
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const token = getToken();
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    // Don't set Content-Type -- browser sets it with boundary for multipart
+    const res = await fetch(`/api/posts/${postId}/asset/upload`, {
+      method: 'POST', headers, body: formData,
+    });
+    if (res.status === 401) { promptForToken(); return; }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const result = await res.json();
+    toast(`${result.type} uploaded`, 'success');
+    navigate('posts');
+  } catch (e) {
+    toast(`Upload failed: ${e.message}`, 'error');
+    if (statusEl) statusEl.textContent = 'Failed';
   }
 }
 
