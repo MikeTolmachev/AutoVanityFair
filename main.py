@@ -149,6 +149,17 @@ def cmd_ui(args):
     subprocess.run(["streamlit", "run", ui_path, "--server.headless", "true"])
 
 
+def cmd_web(args):
+    """Launch the modern web UI (FastAPI + JS frontend)."""
+    import uvicorn
+
+    host = args.host or "127.0.0.1"
+    port = args.port or 8000
+    print(f"Starting OpenLinkedIn Web UI at http://{host}:{port}")
+    print("  (Streamlit UI still available via: python main.py ui)")
+    uvicorn.run("api.server:app", host=host, port=port, reload=args.reload)
+
+
 def cmd_generate_post(args):
     """Generate a single post."""
     from src.core.config_manager import ConfigManager
@@ -255,7 +266,12 @@ def main():
 
     subparsers.add_parser("setup", help="Initialize directories and database")
     subparsers.add_parser("run", help="Start the scheduler daemon")
-    subparsers.add_parser("ui", help="Launch Streamlit UI")
+    subparsers.add_parser("ui", help="Launch Streamlit UI (legacy)")
+
+    web_parser = subparsers.add_parser("web", help="Launch modern web UI")
+    web_parser.add_argument("--host", default="127.0.0.1", help="Bind host")
+    web_parser.add_argument("--port", type=int, default=8000, help="Bind port")
+    web_parser.add_argument("--reload", action="store_true", help="Auto-reload on code changes")
 
     gen_parser = subparsers.add_parser("generate-post", help="Generate a post")
     gen_parser.add_argument("topic", nargs="?", default=None, help="Post topic")
@@ -292,6 +308,8 @@ def main():
         cmd_run(args)
     elif args.command == "ui":
         cmd_ui(args)
+    elif args.command == "web":
+        cmd_web(args)
     elif args.command == "generate-post":
         cmd_generate_post(args)
     elif args.command == "fetch-feeds":

@@ -23,6 +23,8 @@ dependencies = [
     "termcolor>=2.4",
     "catboost>=1.2",
     "google-cloud-aiplatform>=1.38",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
 ]
 
 [project.optional-dependencies]

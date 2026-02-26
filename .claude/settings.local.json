@@ -144,7 +144,9 @@
       "Bash(head:*)",
       "Bash(pip install:*)",
       "Bash(/Users/Mikhail_Tolmachev1/dev/OpenLinkedIn/.venv/bin/python:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(pip3 install:*)",
+      "Bash(.venv/bin/pip install:*)"
     ]
   }
 }
