@@ -28,7 +28,9 @@
 
 ## Vertex AI / Asset Generation
 - Uses `google.genai` SDK (NOT old `vertexai.preview.vision_models`)
-- Imagen: `imagen-4.0-generate-001` via `client.models.generate_images()` -- verified working
+- Gemini image models (`gemini-*`): `generate_content()` with `response_modalities=["IMAGE"]`, location `global`
+- Imagen models (`imagen-*`): `generate_images()`, location `us-central1`
+- Asset generator auto-detects API by model name prefix in `_is_gemini_model()`
 - Veo: `veo-3.1-generate-001` via `client.models.generate_videos()` (async, poll for completion)
 - Config model name may differ from what's actually available -- always check with `client.models.list()`
 - Fast model (`gpt-5-nano`): `ai.generate_fast()` for cheap tasks (asset prompt generation, ranking)
@@ -40,6 +42,14 @@
 - All user data in `innerHTML` must use `escapeHtml()`; URLs in `href` must use `safeUrl()`
 - API errors: log full exception server-side, return generic message to client
 - Limit params bounded with `Query(ge=1, le=500)`
+
+## Linting
+- `.venv/bin/ruff check api/ src/` -- auto-fix with `--fix`
+- E402 suppressed with `noqa` in `api/server.py` (sys.path-dependent imports)
+
+## Feed Sources
+- Defined in `src/content/rss_aggregator.py` as `PRIORITY_1_FEEDS` through `PRIORITY_4_FEEDS`
+- Google AI Blog is P1 (max weight)
 
 ## Code Style
 - Type hints on function signatures
