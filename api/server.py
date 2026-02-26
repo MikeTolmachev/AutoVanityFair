@@ -140,6 +140,32 @@ class GeneratePostBody(BaseModel):
     strategy: Optional[str] = "thought_leadership"
 
 
+class AssetGenerateBody(BaseModel):
+    prompt: str
+    aspect_ratio: Optional[str] = "1:1"
+
+
+# ---------------------------------------------------------------------------
+# LinkedIn publish helper (shared by posts + comments)
+# ---------------------------------------------------------------------------
+
+
+def _get_linkedin_session():
+    """Create a LinkedInSession from config. Raises HTTPException if not configured."""
+    config: ConfigManager = _get("config")
+    lc = config.linkedin
+    if not lc.email:
+        raise HTTPException(400, "LinkedIn credentials not configured. Set LINKEDIN_EMAIL and LINKEDIN_PASSWORD in .env")
+    from src.automation.session_manager import LinkedInSession
+    return LinkedInSession(
+        email=lc.email,
+        password=lc.password,
+        headless=lc.headless,
+        slow_mo=lc.slow_mo,
+        profile_dir=lc.browser_profile_dir,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Dashboard / Stats
 # ---------------------------------------------------------------------------
@@ -239,6 +265,134 @@ def generate_post(body: GeneratePostBody):
         raise HTTPException(500, "Internal server error")
 
 
+@app.post("/api/posts/{post_id}/publish")
+def publish_post(post_id: int):
+    """Publish an approved post to LinkedIn via browser automation."""
+    post_crud: PostCRUD = _get("post_crud")
+    log_crud: InteractionLogCRUD = _get("log_crud")
+    content_crud: ContentLibraryCRUD = _get("content_crud")
+
+    post = post_crud.get(post_id)
+    if not post:
+        raise HTTPException(404, "Post not found")
+    if post["status"] != "approved":
+        raise HTTPException(400, "Post must be approved before publishing")
+
+    session = _get_linkedin_session()
+
+    # Look up source URL for first-comment
+    source_url = None
+    if post.get("rag_sources"):
+        try:
+            import json as _json
+            sources = _json.loads(post["rag_sources"]) if isinstance(post["rag_sources"], str) else post["rag_sources"]
+            if sources and isinstance(sources, list):
+                doc = content_crud.get(int(sources[0]))
+                if doc and doc.get("source"):
+                    source_url = doc["source"]
+        except (ValueError, TypeError):
+            pass
+
+    try:
+        import asyncio
+        from src.automation.linkedin_bot import LinkedInBot
+        from src.core.safety_monitor import SafetyMonitor
+
+        async def _do():
+            async with session:
+                bot = LinkedInBot(session, safety_monitor=SafetyMonitor(
+                    hourly_limit=100, daily_limit=100, weekly_limit=500,
+                ))
+                await bot.login()
+                asset = post.get("asset_path") or ""
+                if asset and not os.path.exists(asset):
+                    asset = ""
+                published = await bot.publish_post(post["content"], asset_path=asset)
+                if not published:
+                    return False, None
+                post_url = await bot.get_my_latest_post_url()
+                if source_url:
+                    comment_text = f"Source article: {source_url}"
+                    if post_url:
+                        await session.wait(2)
+                        await bot.publish_comment(post_url, comment_text)
+                    else:
+                        await session.wait(2)
+                        await bot.comment_on_own_latest_post(comment_text)
+                return True, post_url
+
+        success, post_url = asyncio.run(_do())
+        if success:
+            post_crud.update_status(post_id, "published")
+            if post_url:
+                post_crud.set_linkedin_url(post_id, post_url)
+            detail = f"Post #{post_id} published via web UI"
+            if source_url:
+                detail += " + source link comment"
+            log_crud.log("publish_post", details=detail)
+            return {"ok": True, "linkedin_url": post_url}
+        else:
+            raise HTTPException(502, "Publishing failed. Check browser for CAPTCHA or errors.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Request failed")
+        raise HTTPException(500, "Internal server error")
+
+
+@app.post("/api/posts/{post_id}/asset/generate-image")
+def generate_post_image(post_id: int, body: AssetGenerateBody):
+    """Generate an image with Imagen and attach to post."""
+    config: ConfigManager = _get("config")
+    post_crud: PostCRUD = _get("post_crud")
+    vc = config.vertex_ai
+    if not vc.project_id:
+        raise HTTPException(400, "Set GCP_PROJECT_ID in .env to enable Vertex AI")
+    try:
+        from src.content.asset_generator import AssetGenerator
+        gen = AssetGenerator(
+            project_id=vc.project_id,
+            location=vc.location,
+            imagen_model=vc.imagen_model,
+        )
+        path = gen.generate_image(body.prompt, aspect_ratio=body.aspect_ratio or "1:1")
+        post_crud.set_asset(post_id, path, "image")
+        return {"ok": True, "path": path, "type": "image"}
+    except Exception as e:
+        logger.exception("Request failed")
+        raise HTTPException(500, "Internal server error")
+
+
+@app.post("/api/posts/{post_id}/asset/generate-video")
+def generate_post_video(post_id: int, body: AssetGenerateBody):
+    """Generate a video with Veo and attach to post."""
+    config: ConfigManager = _get("config")
+    post_crud: PostCRUD = _get("post_crud")
+    vc = config.vertex_ai
+    if not vc.project_id:
+        raise HTTPException(400, "Set GCP_PROJECT_ID in .env to enable Vertex AI")
+    try:
+        from src.content.asset_generator import AssetGenerator
+        gen = AssetGenerator(
+            project_id=vc.project_id,
+            location=vc.location,
+            veo_model=vc.veo_model,
+        )
+        path = gen.generate_video(body.prompt, aspect_ratio=body.aspect_ratio or "16:9")
+        post_crud.set_asset(post_id, path, "video")
+        return {"ok": True, "path": path, "type": "video"}
+    except Exception as e:
+        logger.exception("Request failed")
+        raise HTTPException(500, "Internal server error")
+
+
+@app.delete("/api/posts/{post_id}/asset")
+def remove_post_asset(post_id: int):
+    post_crud: PostCRUD = _get("post_crud")
+    post_crud.clear_asset(post_id)
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------------------
 # Comments
 # ---------------------------------------------------------------------------
@@ -282,6 +436,104 @@ def approve_all_draft_comments():
     for c in drafts:
         crud.update_status(c["id"], "approved")
     return {"ok": True, "count": len(drafts)}
+
+
+@app.post("/api/comments/{comment_id}/publish")
+def publish_comment(comment_id: int):
+    """Publish a single approved comment to LinkedIn."""
+    crud: CommentCRUD = _get("comment_crud")
+    log_crud: InteractionLogCRUD = _get("log_crud")
+
+    comment = crud.get(comment_id)
+    if not comment:
+        raise HTTPException(404, "Comment not found")
+    if comment["status"] != "approved":
+        raise HTTPException(400, "Comment must be approved before publishing")
+    if not comment.get("target_post_url"):
+        raise HTTPException(400, "No target post URL")
+
+    session = _get_linkedin_session()
+
+    try:
+        import asyncio
+        from src.automation.linkedin_bot import LinkedInBot
+        from src.core.safety_monitor import SafetyMonitor
+
+        async def _do():
+            async with session:
+                bot = LinkedInBot(session, safety_monitor=SafetyMonitor(
+                    hourly_limit=100, daily_limit=100, weekly_limit=500,
+                ))
+                await bot.login()
+                return await bot.publish_comment(
+                    comment["target_post_url"],
+                    comment["comment_content"],
+                )
+
+        success = asyncio.run(_do())
+        if success:
+            crud.update_status(comment_id, "published")
+            log_crud.log("publish_comment", details=f"Comment #{comment_id} published via web UI")
+            return {"ok": True}
+        else:
+            raise HTTPException(502, "Publishing failed. Check browser for CAPTCHA or errors.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Request failed")
+        raise HTTPException(500, "Internal server error")
+
+
+@app.post("/api/comments/publish-approved")
+def publish_all_approved_comments():
+    """Batch publish all approved comments with target URLs in a single browser session."""
+    crud: CommentCRUD = _get("comment_crud")
+    log_crud: InteractionLogCRUD = _get("log_crud")
+
+    approved = crud.list_by_status("approved")
+    publishable = [c for c in approved if c.get("target_post_url")]
+    if not publishable:
+        return {"ok": True, "published": 0, "failed": 0, "message": "No publishable comments"}
+
+    session = _get_linkedin_session()
+
+    try:
+        import asyncio
+        from src.automation.linkedin_bot import LinkedInBot
+        from src.core.safety_monitor import SafetyMonitor
+
+        async def _do_batch():
+            async with session:
+                bot = LinkedInBot(session, safety_monitor=SafetyMonitor(
+                    hourly_limit=100, daily_limit=100, weekly_limit=500,
+                ))
+                await bot.login()
+                published = 0
+                failed = 0
+                for c in publishable:
+                    try:
+                        ok = await bot.publish_comment(
+                            c["target_post_url"],
+                            c["comment_content"],
+                        )
+                        if ok:
+                            crud.update_status(c["id"], "published")
+                            published += 1
+                        else:
+                            failed += 1
+                    except Exception:
+                        failed += 1
+                    await session.wait(3)
+                return published, failed
+
+        published, failed = asyncio.run(_do_batch())
+        log_crud.log("batch_publish_comments", details=f"{published} published, {failed} failed")
+        return {"ok": True, "published": published, "failed": failed}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Request failed")
+        raise HTTPException(500, "Internal server error")
 
 
 # ---------------------------------------------------------------------------

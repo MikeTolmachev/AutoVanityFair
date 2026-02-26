@@ -1498,6 +1498,7 @@ async function renderPosts(el) {
 function renderPostCard(post, i) {
   const status = post.status || 'draft';
   let actions = '';
+  let assetSection = '';
 
   if (status === 'draft') {
     actions = `
@@ -1507,9 +1508,34 @@ function renderPostCard(post, i) {
     `;
   } else if (status === 'approved') {
     actions = `
-      <button class="btn btn-sm btn-primary" onclick="updatePostStatus(${post.id},'published')">Mark Published</button>
+      <button class="btn btn-sm btn-primary" onclick="publishPost(${post.id})">Publish to LinkedIn</button>
+      <button class="btn btn-sm btn-secondary" onclick="updatePostStatus(${post.id},'published')">Mark Published</button>
       <button class="btn btn-sm btn-secondary" onclick="editPost(${post.id})">Edit</button>
       <button class="btn btn-sm btn-danger" onclick="updatePostStatus(${post.id},'rejected')">Reject</button>
+    `;
+    // Asset section for approved posts
+    assetSection = `
+      <div style="background:var(--bg-3);border-radius:var(--radius-sm);padding:14px;margin:12px 0;border:1px solid var(--border)">
+        <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-2);margin-bottom:10px">Post Asset</div>
+        ${post.asset_path ? `
+          <div style="margin-bottom:10px;font-size:0.8rem;color:var(--success)">Attached: ${escapeHtml(post.asset_type || 'file')} &mdash; ${escapeHtml(post.asset_path?.split('/').pop() || '')}</div>
+          <button class="btn btn-sm btn-danger" onclick="removeAsset(${post.id})">Remove Asset</button>
+        ` : `
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+            <div style="flex:1;min-width:200px">
+              <input type="text" id="asset-prompt-${post.id}" placeholder="Describe the image or video..." style="font-size:0.8rem">
+            </div>
+            <select id="asset-ratio-${post.id}" style="width:80px;font-size:0.8rem">
+              <option value="1:1">1:1</option>
+              <option value="16:9">16:9</option>
+              <option value="9:16">9:16</option>
+              <option value="4:3">4:3</option>
+            </select>
+            <button class="btn btn-sm btn-secondary" onclick="generateImage(${post.id})">Imagen</button>
+            <button class="btn btn-sm btn-secondary" onclick="generateVideo(${post.id})">Veo</button>
+          </div>
+        `}
+      </div>
     `;
   } else if (status === 'published') {
     actions = `
@@ -1530,6 +1556,7 @@ function renderPostCard(post, i) {
         <span class="${badgeClass(escapeHtml(status))}">${escapeHtml(status)}</span>
       </div>
       <div class="content-card-body">${escapeHtml(post.content || '')}</div>
+      ${assetSection}
       <div class="content-card-footer">
         ${actions}
         <span class="char-count">${(post.content || '').length} chars</span>
@@ -1588,6 +1615,61 @@ async function savePostEdit(postId) {
   }
 }
 
+async function publishPost(postId) {
+  if (!confirm('Publish this post to LinkedIn? This will open a browser session.')) return;
+  toast('Publishing to LinkedIn...', 'info');
+  try {
+    const result = await api(`/posts/${postId}/publish`, { method: 'POST' });
+    toast('Post published to LinkedIn!', 'success');
+    refreshSidebarStats();
+    navigate('posts');
+  } catch (e) {
+    toast(`Publish failed: ${e.message}`, 'error');
+  }
+}
+
+async function generateImage(postId) {
+  const prompt = document.getElementById(`asset-prompt-${postId}`)?.value?.trim();
+  const ratio = document.getElementById(`asset-ratio-${postId}`)?.value || '1:1';
+  if (!prompt) { toast('Enter a prompt first', 'error'); return; }
+  toast('Generating image with Imagen...', 'info');
+  try {
+    const result = await api(`/posts/${postId}/asset/generate-image`, {
+      method: 'POST', body: { prompt, aspect_ratio: ratio },
+    });
+    toast(`Image generated: ${result.path}`, 'success');
+    navigate('posts');
+  } catch (e) {
+    toast(`Imagen failed: ${e.message}`, 'error');
+  }
+}
+
+async function generateVideo(postId) {
+  const prompt = document.getElementById(`asset-prompt-${postId}`)?.value?.trim();
+  const ratio = document.getElementById(`asset-ratio-${postId}`)?.value || '16:9';
+  if (!prompt) { toast('Enter a prompt first', 'error'); return; }
+  toast('Generating video with Veo (this may take a while)...', 'info');
+  try {
+    const result = await api(`/posts/${postId}/asset/generate-video`, {
+      method: 'POST', body: { prompt, aspect_ratio: ratio },
+    });
+    toast(`Video generated: ${result.path}`, 'success');
+    navigate('posts');
+  } catch (e) {
+    toast(`Veo failed: ${e.message}`, 'error');
+  }
+}
+
+async function removeAsset(postId) {
+  try {
+    await api(`/posts/${postId}/asset`, { method: 'DELETE' });
+    toast('Asset removed', 'success');
+    navigate('posts');
+  } catch (e) {
+    toast(`Failed: ${e.message}`, 'error');
+  }
+}
+
 /* =============================================================
    COMMENTS
    ============================================================= */
@@ -1610,6 +1692,7 @@ async function renderComments(el) {
       </div>
       <div style="font-size:0.78rem;color:var(--text-2);align-self:center">${comments.length} ${status} comments</div>
       ${status === 'draft' && comments.length ? `<button class="btn btn-success btn-sm" onclick="approveAllDrafts()">Approve All Drafts</button>` : ''}
+      ${status === 'approved' && comments.length ? `<button class="btn btn-primary btn-sm" onclick="publishAllApproved()">Publish All to LinkedIn</button>` : ''}
     </div>
 
     <div id="comments-container">
@@ -1630,6 +1713,7 @@ function renderCommentCard(comment, i) {
     `;
   } else if (status === 'approved') {
     actions = `
+      ${comment.target_post_url ? `<button class="btn btn-sm btn-primary" onclick="publishComment(${comment.id})">Publish to LinkedIn</button>` : ''}
       <button class="btn btn-sm btn-secondary" onclick="editComment(${comment.id})">Edit</button>
       <button class="btn btn-sm btn-danger" onclick="updateCommentStatus(${comment.id},'rejected')">Reject</button>
     `;
@@ -1679,6 +1763,34 @@ async function approveAllDrafts() {
     navigate('comments');
   } catch (e) {
     toast(`Failed: ${e.message}`, 'error');
+  }
+}
+
+async function publishComment(commentId) {
+  if (!confirm('Publish this comment to LinkedIn?')) return;
+  toast('Publishing comment...', 'info');
+  try {
+    await api(`/comments/${commentId}/publish`, { method: 'POST' });
+    toast('Comment published!', 'success');
+    navigate('comments');
+  } catch (e) {
+    toast(`Publish failed: ${e.message}`, 'error');
+  }
+}
+
+async function publishAllApproved() {
+  if (!confirm('Publish all approved comments to LinkedIn? This will open a single browser session.')) return;
+  toast('Publishing all approved comments...', 'info');
+  try {
+    const result = await api('/comments/publish-approved', { method: 'POST' });
+    if (result.published > 0) {
+      toast(`Published ${result.published} comments${result.failed ? ` (${result.failed} failed)` : ''}`, 'success');
+    } else {
+      toast(result.message || 'No comments published', 'info');
+    }
+    navigate('comments');
+  } catch (e) {
+    toast(`Batch publish failed: ${e.message}`, 'error');
   }
 }
 
