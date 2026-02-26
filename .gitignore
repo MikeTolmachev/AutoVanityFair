@@ -15,6 +15,7 @@ browser_profile/
 
 # ML training artifacts
 catboost_info/
+data/reranker_model*
 
 # Python
 __pycache__/
