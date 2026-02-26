@@ -173,11 +173,16 @@ class AssetGenerator:
             ),
         )
 
-        # Poll for completion
-        while not operation.done:
+        # Poll for completion (max 10 minutes)
+        max_polls = 60
+        for poll in range(max_polls):
+            if operation.done:
+                break
             time.sleep(10)
             operation = client.operations.get(operation)
-            logger.info("Video generation in progress...")
+            logger.info("Video generation in progress... (%d/%d)", poll + 1, max_polls)
+        else:
+            raise RuntimeError(f"Video generation timed out after {max_polls * 10}s")
 
         if not operation.result or not operation.result.generated_videos:
             raise RuntimeError("No video returned in response")

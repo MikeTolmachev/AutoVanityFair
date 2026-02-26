@@ -267,7 +267,7 @@ def generate_post(body: GeneratePostBody):
 
 
 @app.post("/api/posts/{post_id}/publish")
-def publish_post(post_id: int):
+async def publish_post(post_id: int):
     """Publish an approved post to LinkedIn via browser automation."""
     post_crud: PostCRUD = _get("post_crud")
     log_crud: InteractionLogCRUD = _get("log_crud")
@@ -322,7 +322,7 @@ def publish_post(post_id: int):
                         await bot.comment_on_own_latest_post(comment_text)
                 return True, post_url
 
-        success, post_url = asyncio.run(_do())
+        success, post_url = await asyncio.to_thread(asyncio.run, _do())
         if success:
             post_crud.update_status(post_id, "published")
             if post_url:
@@ -448,10 +448,7 @@ async def upload_post_asset(post_id: int, request: Request):
         os.makedirs("data/assets", exist_ok=True)
         save_path = f"data/assets/post_{post_id}.{ext}"
 
-        MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
         content = await file.read()
-        if len(content) > MAX_UPLOAD_BYTES:
-            raise HTTPException(413, "File too large (max 50 MB)")
         with open(save_path, "wb") as f:
             f.write(content)
 
@@ -510,7 +507,7 @@ def approve_all_draft_comments():
 
 
 @app.post("/api/comments/{comment_id}/publish")
-def publish_comment(comment_id: int):
+async def publish_comment(comment_id: int):
     """Publish a single approved comment to LinkedIn."""
     crud: CommentCRUD = _get("comment_crud")
     log_crud: InteractionLogCRUD = _get("log_crud")
@@ -541,7 +538,7 @@ def publish_comment(comment_id: int):
                     comment["comment_content"],
                 )
 
-        success = asyncio.run(_do())
+        success = await asyncio.to_thread(asyncio.run, _do())
         if success:
             crud.update_status(comment_id, "published")
             log_crud.log("publish_comment", details=f"Comment #{comment_id} published via web UI")
@@ -556,7 +553,7 @@ def publish_comment(comment_id: int):
 
 
 @app.post("/api/comments/publish-approved")
-def publish_all_approved_comments():
+async def publish_all_approved_comments():
     """Batch publish all approved comments with target URLs in a single browser session."""
     crud: CommentCRUD = _get("comment_crud")
     log_crud: InteractionLogCRUD = _get("log_crud")
@@ -597,7 +594,7 @@ def publish_all_approved_comments():
                     await session.wait(3)
                 return published, failed
 
-        published, failed = asyncio.run(_do_batch())
+        published, failed = await asyncio.to_thread(asyncio.run, _do_batch())
         log_crud.log("batch_publish_comments", details=f"{published} published, {failed} failed")
         return {"ok": True, "published": published, "failed": failed}
     except HTTPException:
@@ -802,7 +799,10 @@ def fetch_feeds(
 
         prio_list = None
         if priorities:
-            prio_list = [int(p.strip()) for p in priorities.split(",")]
+            try:
+                prio_list = [int(p.strip()) for p in priorities.split(",")]
+            except ValueError:
+                raise HTTPException(400, "priorities must be comma-separated integers (e.g. '1,2')")
 
         scored = aggregator.fetch_and_filter(
             priorities=prio_list,
@@ -1008,4 +1008,4 @@ if os.path.isdir(WEB_DIR):
 # Serve generated assets (images/videos)
 ASSETS_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "assets")
 os.makedirs(ASSETS_DIR, exist_ok=True)
-app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+app.mount("/api/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
