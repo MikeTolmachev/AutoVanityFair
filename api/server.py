@@ -32,10 +32,10 @@ API_TOKEN: Optional[str] = os.environ.get("OPENLINKEDIN_API_TOKEN", "").strip() 
 # Ensure project root is on path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.core.config_manager import ConfigManager
-from src.core.safety_monitor import SafetyMonitor
-from src.database.models import Database
-from src.database.crud import (
+from src.core.config_manager import ConfigManager  # noqa: E402
+from src.core.safety_monitor import SafetyMonitor  # noqa: E402
+from src.database.models import Database  # noqa: E402
+from src.database.crud import (  # noqa: E402
     PostCRUD,
     CommentCRUD,
     InteractionLogCRUD,
@@ -260,7 +260,7 @@ def generate_post(body: GeneratePostBody):
         )
         log_crud.log("generate_post", details=f"Post #{post_id} generated via web UI")
         return {"id": post_id, "content": result["content"], "strategy": result["strategy"]}
-    except Exception as e:
+    except Exception:
         logger.exception("Request failed")
         raise HTTPException(500, "Internal server error")
 
@@ -335,7 +335,7 @@ def publish_post(post_id: int):
             raise HTTPException(502, "Publishing failed. Check browser for CAPTCHA or errors.")
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("Request failed")
         raise HTTPException(500, "Internal server error")
 
@@ -358,7 +358,7 @@ def generate_post_image(post_id: int, body: AssetGenerateBody):
         path = gen.generate_image(body.prompt, aspect_ratio=body.aspect_ratio or "1:1")
         post_crud.set_asset(post_id, path, "image")
         return {"ok": True, "path": path, "type": "image"}
-    except Exception as e:
+    except Exception:
         logger.exception("Request failed")
         raise HTTPException(500, "Internal server error")
 
@@ -381,7 +381,7 @@ def generate_post_video(post_id: int, body: AssetGenerateBody):
         path = gen.generate_video(body.prompt, aspect_ratio=body.aspect_ratio or "16:9")
         post_crud.set_asset(post_id, path, "video")
         return {"ok": True, "path": path, "type": "video"}
-    except Exception as e:
+    except Exception:
         logger.exception("Request failed")
         raise HTTPException(500, "Internal server error")
 
@@ -414,7 +414,7 @@ def generate_asset_prompt(post_id: int):
             f"Generate a visual prompt for this LinkedIn post:\n\n{post['content'][:1500]}",
         )
         return {"prompt": result.content, "model": result.model}
-    except Exception as e:
+    except Exception:
         logger.exception("Request failed")
         raise HTTPException(500, "Internal server error")
 
@@ -455,7 +455,7 @@ async def upload_post_asset(post_id: int, request: Request):
         return {"ok": True, "path": save_path, "type": asset_type}
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("Request failed")
         raise HTTPException(500, "Internal server error")
 
@@ -546,7 +546,7 @@ def publish_comment(comment_id: int):
             raise HTTPException(502, "Publishing failed. Check browser for CAPTCHA or errors.")
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("Request failed")
         raise HTTPException(500, "Internal server error")
 
@@ -598,7 +598,7 @@ def publish_all_approved_comments():
         return {"ok": True, "published": published, "failed": failed}
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("Request failed")
         raise HTTPException(500, "Internal server error")
 
@@ -706,7 +706,7 @@ def generate_post_from_library(doc_id: int):
 
         crud.update_generated_post(doc_id, title, body)
         return {"title": title, "body": body, "tokens_used": result.tokens_used}
-    except Exception as e:
+    except Exception:
         logger.exception("Request failed")
         raise HTTPException(500, "Internal server error")
 
@@ -834,7 +834,7 @@ def fetch_feeds(
             persisted += 1
 
         return {"fetched": len(scored), "persisted": persisted}
-    except Exception as e:
+    except Exception:
         logger.exception("Request failed")
         raise HTTPException(500, "Internal server error")
 
@@ -889,7 +889,7 @@ def retrain_reranker():
                 feedback_map[h] = "liked"
         result = reranker.train(training_data, feedback_map)
         return result
-    except Exception as e:
+    except Exception:
         logger.exception("Request failed")
         raise HTTPException(500, "Internal server error")
 

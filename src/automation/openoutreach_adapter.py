@@ -5,9 +5,7 @@ Provides: build_playwright(), human_type(), playwright_login(), goto_page().
 """
 
 import logging
-import os
 import random
-import sys
 
 logger = logging.getLogger("openlinkedin.adapter")
 

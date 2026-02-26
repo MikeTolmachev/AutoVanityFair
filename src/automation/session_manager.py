@@ -7,7 +7,6 @@ OpenOutreach's navigation functions expect, without requiring Django models.
 
 import asyncio
 import logging
-from typing import Optional
 
 from src.automation.openoutreach_adapter import build_playwright
 

@@ -3,7 +3,7 @@ FeedScraper -- scrolls LinkedIn feed and extracts post cards.
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 logger = logging.getLogger("openlinkedin.feed_scraper")

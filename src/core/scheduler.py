@@ -2,7 +2,6 @@
 ContentScheduler -- APScheduler with CET timezone for posts and comments.
 """
 
-import asyncio
 import logging
 from typing import Callable, Optional
 

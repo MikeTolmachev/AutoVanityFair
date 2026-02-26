@@ -6,7 +6,7 @@ production-focused content filtering. PyTorch-centric; TensorFlow
 is treated as legacy/low-priority.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 

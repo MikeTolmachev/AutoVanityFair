@@ -25,7 +25,6 @@ from src.content.keyword_taxonomy import (
     MEDIUM_PRIORITY_KEYWORDS,
     LOW_PRIORITY_KEYWORDS,
     ALL_CATEGORIES,
-    KeywordPriority,
 )
 
 logger = logging.getLogger("openlinkedin.content_filter")

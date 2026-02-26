@@ -10,8 +10,7 @@ import json
 import logging
 import time
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
 from typing import Optional
 from urllib.request import Request, urlopen
 from urllib.error import URLError

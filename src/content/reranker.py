@@ -11,7 +11,6 @@ Falls back to rule-based scoring when insufficient training data exists.
 import json
 import logging
 import os
-from typing import Optional
 
 from src.content.content_filter import ScoredContent
 
