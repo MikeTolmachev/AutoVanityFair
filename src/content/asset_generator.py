@@ -94,11 +94,30 @@ class AssetGenerator:
                 parts=[types.Part.from_text(text=prompt)],
             ),
             config=types.GenerateContentConfig(
+                temperature=1,
+                top_p=0.95,
+                max_output_tokens=32768,
                 response_modalities=["IMAGE"],
+                safety_settings=[
+                    types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
+                    types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
+                    types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"),
+                    types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF"),
+                ],
+                system_instruction=[types.Part.from_text(
+                    text="Generate realistic, polished, professional-grade visuals suitable for "
+                    "executive-level LinkedIn content. The output should look like it belongs in a "
+                    "Fortune 500 corporate presentation or a top-tier business publication. "
+                    "Clean composition, sharp details, modern aesthetic. No cartoons, no clip-art, "
+                    "no stock-photo cliches. Think C-suite, VP-level personal brand."
+                )],
                 image_config=types.ImageConfig(
                     aspect_ratio=aspect_ratio,
                     image_size="2K",
                     output_mime_type="image/png",
+                ),
+                thinking_config=types.ThinkingConfig(
+                    thinking_level="HIGH",
                 ),
             ),
         )
