@@ -29,13 +29,13 @@ class CommentGenerator:
         post_content: str,
         post_author: str = "Unknown",
         post_url: str = "",
-        past_posts: Optional[list[dict]] = None,
+        past_comments: Optional[list[dict]] = None,
     ) -> dict:
         """Generate a comment with strategy selection and confidence scoring.
 
         Args:
-            past_posts: List of user's published posts (dicts with 'content' key)
-                        used as RAG context for voice/expertise matching.
+            past_comments: List of user's previous comments (dicts with
+                           'comment_content' key) used for voice matching.
 
         Returns dict with keys: content, strategy, confidence, rag_sources, validation
         """
@@ -43,11 +43,11 @@ class CommentGenerator:
         rag_context = ""
         rag_sources: list[str] = []
 
-        # Build past-posts context
-        past_posts_context = ""
-        if past_posts:
-            snippets = [f"- {p['content'][:200]}" for p in past_posts[:10]]
-            past_posts_context = "Your past published LinkedIn posts:\n" + "\n".join(snippets)
+        # Build past-comments context
+        past_context = ""
+        if past_comments:
+            snippets = [f"- {c['comment_content'][:200]}" for c in past_comments[:10]]
+            past_context = "Your previous LinkedIn comments:\n" + "\n".join(snippets)
             strategy = "grounded"
 
         if self.rag:
@@ -62,7 +62,7 @@ class CommentGenerator:
             author=post_author,
             post_content=post_content,
             rag_context=rag_context,
-            past_posts_context=past_posts_context,
+            past_context=past_context,
         )
 
         result = None

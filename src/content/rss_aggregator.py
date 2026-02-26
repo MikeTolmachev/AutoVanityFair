@@ -294,10 +294,24 @@ class FeedItem:
 # ---------------------------------------------------------------------------
 def _fetch_url(url: str, timeout: int = 15) -> Optional[bytes]:
     """Fetch raw bytes from a URL."""
+    import ssl
+
     try:
         req = Request(url, headers={"User-Agent": USER_AGENT})
-        with urlopen(req, timeout=timeout) as resp:
-            return resp.read()
+        # Try default SSL first, fall back to unverified for feeds with
+        # broken certificate chains (e.g. hnrss.org).
+        try:
+            with urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except URLError as ssl_err:
+            if "CERTIFICATE_VERIFY_FAILED" in str(ssl_err):
+                logger.warning("SSL verify failed for %s, retrying without verification", url)
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                with urlopen(req, timeout=timeout, context=ctx) as resp:
+                    return resp.read()
+            raise
     except (URLError, OSError, TimeoutError) as e:
         logger.warning("Failed to fetch %s: %s", url, e)
         return None

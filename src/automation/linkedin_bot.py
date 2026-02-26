@@ -47,6 +47,57 @@ class LinkedInSearchResult:
     published_at: str = ""
 
 
+def search_linkedin_via_google(query: str, max_results: int = 20) -> list[LinkedInSearchResult]:
+    """Search for LinkedIn posts via Google News RSS (no browser needed).
+
+    This is a fallback when the Playwright-based LinkedIn search returns 0
+    results (e.g. due to DOM changes or auth issues).
+    """
+    import xml.etree.ElementTree as ET
+    from urllib.parse import quote
+    from src.content.rss_aggregator import _fetch_url, _strip_html
+
+    search_query = f"site:linkedin.com/posts {query}"
+    url = f"https://news.google.com/rss/search?q={quote(search_query)}&hl=en-US&gl=US&ceid=US:en"
+
+    logger.info("Google fallback search: %s", query)
+    raw = _fetch_url(url, timeout=15)
+    if not raw:
+        return []
+
+    results: list[LinkedInSearchResult] = []
+    try:
+        root = ET.fromstring(raw)
+        for item in root.iter("item"):
+            title_el = item.find("title")
+            link_el = item.find("link")
+            desc_el = item.find("description")
+            pub_el = item.find("pubDate")
+            source_el = item.find("source")
+
+            title = title_el.text.strip() if title_el is not None and title_el.text else ""
+            link = link_el.text.strip() if link_el is not None and link_el.text else ""
+            description = _strip_html(desc_el.text) if desc_el is not None and desc_el.text else ""
+            pub_date = pub_el.text.strip() if pub_el is not None and pub_el.text else ""
+            author = source_el.text.strip() if source_el is not None and source_el.text else ""
+
+            content = f"{title} {description}".strip()
+            if content and len(content) > 20:
+                results.append(LinkedInSearchResult(
+                    author=author,
+                    content=content[:500],
+                    url=link,
+                    published_at=pub_date,
+                ))
+                if len(results) >= max_results:
+                    break
+    except ET.ParseError as e:
+        logger.warning("Google RSS parse error: %s", e)
+
+    logger.info("Google fallback found %d results for '%s'", len(results), query)
+    return results
+
+
 class LinkedInBot:
     """High-level LinkedIn automation: publish posts, comments, search, scrape feed."""
 
@@ -370,95 +421,123 @@ class LinkedInBot:
         logger.info("Comment published on %s", post_url)
         return True
 
-    async def search_posts(self, query: str, max_results: int = 10) -> list[LinkedInSearchResult]:
+    async def search_posts(self, query: str, max_results: int = 20) -> list[LinkedInSearchResult]:
         """Search LinkedIn for posts matching a query.
 
-        Uses JavaScript DOM extraction since LinkedIn's CSS classes change frequently.
+        Uses JavaScript DOM extraction with multiple strategies since
+        LinkedIn's CSS classes change frequently.
         """
         page = self.session.page
         from urllib.parse import quote
 
-        search_url = f"https://www.linkedin.com/search/results/content/?keywords={quote(query)}&sortBy=%22date_posted%22"
+        search_url = (
+            f"https://www.linkedin.com/search/results/content/"
+            f"?keywords={quote(query)}"
+        )
         logger.info("Searching LinkedIn for: %s", query)
         await page.goto(search_url, wait_until="domcontentloaded")
-        await page.wait_for_timeout(4000)
+        await page.wait_for_timeout(5000)
 
-        # Scroll to load results
-        for _ in range(3):
+        # Scroll more aggressively to load results
+        for i in range(6):
             await page.evaluate("window.scrollBy(0, window.innerHeight)")
-            await page.wait_for_timeout(2000)
+            await page.wait_for_timeout(2000 + i * 500)
 
-        # Extract posts using JavaScript -- more robust than CSS selectors
-        raw_posts = await page.evaluate("""() => {
+        # Extract posts using JavaScript -- multiple extraction strategies
+        raw_posts = await page.evaluate(r"""() => {
             const posts = [];
-
-            // Find all activity links on the page to identify post containers
-            const allLinks = document.querySelectorAll('a[href*="urn:li:activity:"]');
             const seenUrns = new Set();
 
-            for (const link of allLinks) {
+            // --- Strategy 1: Activity URN links ---
+            const actLinks = document.querySelectorAll('a[href*="urn:li:activity:"]');
+            for (const link of actLinks) {
                 const href = link.getAttribute('href') || '';
-                // Extract the activity URN
-                const match = href.match(/urn:li:activity:\\d+/);
+                const match = href.match(/urn:li:activity:\d+/);
                 if (!match || seenUrns.has(match[0])) continue;
                 seenUrns.add(match[0]);
 
-                // Walk up to find the post container (usually 3-6 levels up)
                 let container = link;
-                for (let i = 0; i < 8; i++) {
+                for (let i = 0; i < 10; i++) {
                     if (!container.parentElement) break;
                     container = container.parentElement;
-                    // Stop at elements that look like post cards
                     const cls = container.className || '';
                     if (cls.includes('feed-shared-update') ||
                         cls.includes('update-components') ||
                         cls.includes('search-content') ||
-                        container.getAttribute('data-urn')) {
+                        cls.includes('reusable-search__result-container') ||
+                        container.getAttribute('data-urn') ||
+                        container.getAttribute('data-chameleon-result-urn')) {
                         break;
                     }
                 }
 
-                // Extract text content from the container
                 const fullText = container.innerText || '';
-
-                // Try to separate author from content
-                const lines = fullText.split('\\n').filter(l => l.trim().length > 0);
-                let author = '';
+                const lines = fullText.split('\n').filter(l => l.trim().length > 0);
+                let author = lines.length >= 1 ? lines[0].trim() : '';
                 let content = '';
-
                 if (lines.length >= 2) {
-                    // First non-empty line is usually the author name
-                    author = lines[0].trim();
-                    // Content is usually the longest block of text
-                    let longestLine = '';
+                    let longest = '';
                     for (const line of lines) {
-                        if (line.length > longestLine.length && line.length > 30) {
-                            longestLine = line;
-                        }
+                        if (line.length > longest.length && line.length > 20) longest = line;
                     }
-                    content = longestLine || lines.slice(1).join(' ').trim();
+                    content = longest || lines.slice(1).join(' ').trim();
                 }
 
                 let url = href;
                 if (url.startsWith('/')) url = 'https://www.linkedin.com' + url;
-                // Strip query params
                 const qIdx = url.indexOf('?');
                 if (qIdx > 0) url = url.substring(0, qIdx);
 
-                // Try to extract a relative timestamp (e.g. "2w", "1mo", "3d")
                 let publishedAt = '';
                 const timeEl = container.querySelector('time');
-                if (timeEl) {
-                    // Prefer the datetime attribute (ISO 8601)
-                    publishedAt = timeEl.getAttribute('datetime') || timeEl.innerText.trim();
-                } else {
-                    // Fallback: look for short tokens like "2w", "1mo", "3d"
-                    const timeMatch = fullText.match(/\b(\d+(?:s|m|mi|min|h|hr|d|w|mo|yr))\b/i);
-                    if (timeMatch) publishedAt = timeMatch[1];
-                }
+                if (timeEl) publishedAt = timeEl.getAttribute('datetime') || timeEl.innerText.trim();
 
                 if (content.length > 20) {
                     posts.push({ author, content: content.substring(0, 500), url, publishedAt });
+                }
+            }
+
+            // --- Strategy 2: Search result containers (newer LinkedIn DOM) ---
+            if (posts.length === 0) {
+                const containers = document.querySelectorAll(
+                    '.reusable-search__result-container, ' +
+                    '[data-chameleon-result-urn], ' +
+                    '.search-content__result, ' +
+                    '.feed-shared-update-v2'
+                );
+                for (const container of containers) {
+                    const fullText = container.innerText || '';
+                    if (fullText.length < 50) continue;
+
+                    const lines = fullText.split('\n').filter(l => l.trim().length > 0);
+                    let author = lines.length >= 1 ? lines[0].trim() : '';
+                    let content = '';
+                    let longest = '';
+                    for (const line of lines) {
+                        if (line.length > longest.length && line.length > 20) longest = line;
+                    }
+                    content = longest || lines.slice(1, 5).join(' ').trim();
+                    if (content.length < 20) continue;
+
+                    // Try to find a post link
+                    let url = '';
+                    const aLink = container.querySelector('a[href*="urn:li:activity:"], a[href*="/feed/update/"]');
+                    if (aLink) {
+                        url = aLink.getAttribute('href') || '';
+                        if (url.startsWith('/')) url = 'https://www.linkedin.com' + url;
+                        const qIdx = url.indexOf('?');
+                        if (qIdx > 0) url = url.substring(0, qIdx);
+                    }
+
+                    let publishedAt = '';
+                    const timeEl = container.querySelector('time');
+                    if (timeEl) publishedAt = timeEl.getAttribute('datetime') || timeEl.innerText.trim();
+
+                    const key = url || content.substring(0, 80);
+                    if (!seenUrns.has(key)) {
+                        seenUrns.add(key);
+                        posts.push({ author, content: content.substring(0, 500), url, publishedAt });
+                    }
                 }
             }
 
@@ -469,9 +548,10 @@ class LinkedInBot:
         seen_urls = set()
         for p in raw_posts[:max_results]:
             url = p.get("url", "")
-            if url in seen_urls:
+            key = url or p.get("content", "")[:80]
+            if key in seen_urls:
                 continue
-            seen_urls.add(url)
+            seen_urls.add(key)
             results.append(LinkedInSearchResult(
                 author=p.get("author", ""),
                 content=p.get("content", ""),

@@ -181,6 +181,20 @@ class CommentCRUD:
             ).fetchone()
             return row["cnt"]
 
+    def count_total(self) -> int:
+        with self.db.connect() as conn:
+            row = conn.execute("SELECT COUNT(*) as cnt FROM comments").fetchone()
+            return row["cnt"]
+
+    def get_recent(self, limit: int = 20) -> list[dict]:
+        """Return recent comments (any status) for use as voice context."""
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM comments ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
 
 class InteractionLogCRUD:
     def __init__(self, db: Database):
@@ -489,3 +503,84 @@ class FeedbackCRUD:
                     result.append(row)
 
             return result
+
+
+class SearchFeedbackCRUD:
+    """Store user selection feedback on LinkedIn search results for ranking."""
+
+    def __init__(self, db: Database):
+        self.db = db
+
+    def record_batch(
+        self,
+        search_queries: list[str],
+        ranked_results: list[dict],
+        selected_indices: set[int],
+    ) -> None:
+        """Record feedback for all search results in a batch.
+
+        selected_indices: set of indices into ranked_results that the user selected.
+        Unselected results are stored as negative signals.
+        """
+        query_str = "; ".join(search_queries)
+        with self.db.connect() as conn:
+            for i, item in enumerate(ranked_results):
+                conn.execute(
+                    """INSERT INTO search_feedback
+                       (search_query, post_url, post_author, post_content,
+                        relevance_score, selected)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        query_str,
+                        item.get("url", ""),
+                        item.get("author", ""),
+                        (item.get("content", ""))[:500],
+                        item.get("relevance_score", 0),
+                        1 if i in selected_indices else 0,
+                    ),
+                )
+
+    def get_positive_signals(self) -> list[dict]:
+        """Return all positively-selected search results."""
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM search_feedback WHERE selected = 1 ORDER BY created_at DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_all(self, limit: int = 500) -> list[dict]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM search_feedback ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_author_affinity(self) -> dict[str, float]:
+        """Compute author selection rate: authors the user frequently engages with."""
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """SELECT post_author,
+                          SUM(selected) as selected_count,
+                          COUNT(*) as total_count
+                   FROM search_feedback
+                   WHERE post_author != ''
+                   GROUP BY post_author
+                   HAVING total_count >= 2
+                   ORDER BY CAST(SUM(selected) AS REAL) / COUNT(*) DESC"""
+            ).fetchall()
+            return {
+                r["post_author"]: r["selected_count"] / r["total_count"]
+                for r in rows
+            }
+
+    def count(self) -> dict[str, int]:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                """SELECT
+                     COUNT(*) as total,
+                     SUM(selected) as selected,
+                     COUNT(*) - SUM(selected) as skipped
+                   FROM search_feedback"""
+            ).fetchone()
+            return dict(row) if row else {"total": 0, "selected": 0, "skipped": 0}

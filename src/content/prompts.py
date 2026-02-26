@@ -81,13 +81,13 @@ COMMENT_SYSTEM_PROMPT = """You are a thoughtful LinkedIn commenter writing as a 
 - Avoid generic praise like "Great post!" or "Thanks for sharing!"
 - Sound natural and human, not like a bot
 - Do NOT use placeholder text
-- When past posts are provided, reference your own published expertise naturally"""
+- When past comments are provided, maintain a consistent voice and style"""
 
 COMMENT_TEMPLATES = {
-    "grounded": """Write a comment on the following LinkedIn post, grounded in your own published content and knowledge base.
+    "grounded": """Write a comment on the following LinkedIn post, maintaining the same voice and style as your previous comments.
 
-Your past published posts (use these to maintain consistent voice and reference your own expertise):
-{past_posts_context}
+Your previous comments (use these to maintain consistent voice and tone):
+{past_context}
 
 Additional knowledge base context:
 {rag_context}
@@ -96,13 +96,13 @@ Post by {author}:
 {post_content}
 
 Write a comment that:
-- Connects the post's topic to your own published insights
-- Adds a new angle or relevant experience
-- Maintains your established voice as an AI executive""",
+- Adds a new angle, relevant experience, or thoughtful question
+- Maintains your established commenting voice
+- Sounds like a natural continuation of your previous engagement style""",
 
     "generic": """Write a comment on the following LinkedIn post.
 
-{past_posts_context}
+{past_context}
 
 Post by {author}:
 {post_content}
@@ -110,7 +110,6 @@ Post by {author}:
 Write a thoughtful comment that:
 - Shows you read and understood the post
 - Adds a relevant perspective, question, or example
-- If past posts are provided, subtly connect to your established expertise
 - Keeps a professional yet conversational tone""",
 }
 
@@ -143,9 +142,10 @@ Return ONLY the queries, one per line, no numbering or explanation:"""
 
 RANK_SEARCH_RESULTS_PROMPT = """I found these LinkedIn posts. Rank them by how well they match my expertise and how much value I could add as a commenter. Only include posts worth commenting on.
 
-IMPORTANT: Strongly penalize stale posts. Posts older than 2 months are less valuable, and posts older than 4 months should almost never be recommended. Prefer recent content (< 1 month old).
+Post age does NOT matter -- older posts are perfectly fine to comment on.
+Prefer posts with high engagement potential: open-ended discussions, thought-provoking topics, and posts by active authors.
 
-My expertise (from my published posts):
+My expertise context:
 {expertise_summary}
 
 Found posts:
@@ -157,4 +157,4 @@ SCORE: <1-10, where 10 = perfect match for my expertise>
 REASON: <why I should comment on this>
 ---
 
-Only include posts scoring 6 or higher. If none qualify, return NONE."""
+Only include posts scoring 5 or higher. If none qualify, return NONE."""

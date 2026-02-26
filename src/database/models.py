@@ -97,6 +97,20 @@ CREATE TABLE IF NOT EXISTS user_feedback (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_feedback_item ON user_feedback(feed_item_id);
+
+CREATE TABLE IF NOT EXISTS search_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    search_query TEXT NOT NULL,
+    post_url TEXT,
+    post_author TEXT,
+    post_content TEXT,
+    relevance_score REAL DEFAULT 0.0,
+    selected INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_feedback_query ON search_feedback(search_query);
+CREATE INDEX IF NOT EXISTS idx_search_feedback_selected ON search_feedback(selected);
 """
 
 

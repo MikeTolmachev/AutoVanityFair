@@ -325,7 +325,10 @@ def _publish_post(
                         hourly_limit=100, daily_limit=100, weekly_limit=500,
                     ))
                     await bot.login()
-                    published = await bot.publish_post(post["content"])
+                    asset = post.get("asset_path") or ""
+                    if asset and not os.path.exists(asset):
+                        asset = ""
+                    published = await bot.publish_post(post["content"], asset_path=asset)
 
                     if not published:
                         return False, None

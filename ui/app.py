@@ -13,7 +13,7 @@ import streamlit as st
 from src.core.config_manager import ConfigManager
 from src.core.safety_monitor import SafetyMonitor
 from src.database.models import Database
-from src.database.crud import PostCRUD, CommentCRUD, InteractionLogCRUD, ContentLibraryCRUD, FeedItemCRUD, FeedbackCRUD
+from src.database.crud import PostCRUD, CommentCRUD, InteractionLogCRUD, ContentLibraryCRUD, FeedItemCRUD, FeedbackCRUD, SearchFeedbackCRUD
 from src.content.generator import create_ai_provider
 from src.content.post_generator import PostGenerator
 from src.content.validators import ContentValidator
@@ -80,6 +80,7 @@ def main():
     content_crud = ContentLibraryCRUD(db)
     feed_crud = FeedItemCRUD(db)
     feedback_crud = FeedbackCRUD(db)
+    search_feedback_crud = SearchFeedbackCRUD(db)
 
     # Sidebar
     st.sidebar.title("OpenLinkedIn")
@@ -147,15 +148,15 @@ def main():
             log_crud=log_crud,
             linkedin_config=config.linkedin,
             content_crud=content_crud,
+            vertex_ai_config=config.vertex_ai,
         )
 
     with tab_comments:
         render_comments_queue(
             comment_crud,
-            post_crud=post_crud,
-            feed_crud=feed_crud,
             ai_config=config.ai,
             linkedin_config=config.linkedin,
+            search_feedback_crud=search_feedback_crud,
         )
 
     with tab_analytics:

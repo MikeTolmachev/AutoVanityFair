@@ -1,16 +1,28 @@
 """
 Comments Queue page.
 
-Generate comments grounded in past published posts,
-search LinkedIn for posts to comment on, review/approve/publish.
+Search LinkedIn by topic filters, generate comments,
+build voice profile from past comments over time.
 """
 
 import streamlit as st
 from typing import Optional
 
 from src.core.config_manager import AIConfig, LinkedInConfig
-from src.database.crud import CommentCRUD, PostCRUD, FeedItemCRUD
+from src.database.crud import CommentCRUD, PostCRUD, FeedItemCRUD, SearchFeedbackCRUD
 from ui.components.editor import render_editor
+
+# Predefined topic filters for LinkedIn search
+TOPIC_FILTERS = {
+    "GenAI": ["generative AI", "GenAI applications", "GenAI enterprise"],
+    "LLM": ["large language models", "LLM deployment", "LLM fine-tuning"],
+    "AI Agents": ["AI agents", "agentic AI", "autonomous agents"],
+    "MLOps": ["MLOps", "ML infrastructure", "model deployment"],
+    "AI Strategy": ["AI strategy", "AI transformation", "enterprise AI"],
+    "Computer Vision": ["computer vision", "image recognition", "multimodal AI"],
+    "Data Engineering": ["data engineering", "data pipeline", "data platform"],
+    "AI Ethics": ["responsible AI", "AI ethics", "AI governance"],
+}
 
 
 def render_comments_queue(
@@ -19,13 +31,14 @@ def render_comments_queue(
     feed_crud: Optional[FeedItemCRUD] = None,
     ai_config: Optional[AIConfig] = None,
     linkedin_config: Optional[LinkedInConfig] = None,
+    search_feedback_crud: Optional[SearchFeedbackCRUD] = None,
 ):
     st.header("Comments")
 
     tab_generate, tab_queue = st.tabs(["Generate Comments", "Review Queue"])
 
     with tab_generate:
-        _render_generate_tab(comment_crud, post_crud, feed_crud, ai_config, linkedin_config)
+        _render_generate_tab(comment_crud, ai_config, linkedin_config, search_feedback_crud)
 
     with tab_queue:
         _render_queue_tab(comment_crud, linkedin_config)
@@ -36,102 +49,110 @@ def render_comments_queue(
 # ---------------------------------------------------------------------------
 def _render_generate_tab(
     comment_crud: CommentCRUD,
-    post_crud: Optional[PostCRUD],
-    feed_crud: Optional[FeedItemCRUD],
     ai_config: Optional[AIConfig],
     linkedin_config: Optional[LinkedInConfig],
+    search_feedback_crud: Optional[SearchFeedbackCRUD],
 ):
-    # Past published posts as RAG context
-    past_posts = []
-    if post_crud:
-        past_posts = post_crud.list_by_status("published", limit=20)
+    total_comments = comment_crud.count_total()
 
-    if past_posts:
-        with st.expander(f"Your published posts used as context ({len(past_posts)})", expanded=False):
-            for p in past_posts[:5]:
-                st.caption(f"- {p['content'][:100]}...")
+    # Show context source info
+    if total_comments > 0:
+        past_comments = comment_crud.get_recent(limit=20)
+        with st.expander(f"Your previous comments used as voice context ({min(total_comments, 20)})", expanded=False):
+            for c in past_comments[:5]:
+                st.caption(f"- {c['comment_content'][:100]}...")
     else:
-        st.info("No published posts yet. Publish some posts first so the AI can match your voice and expertise.")
+        st.info("No comments yet. Your first comments will establish your voice. Future comments will match that style automatically.")
 
     st.divider()
 
-    # --- Source selection ---
-    st.markdown("##### Find a post to comment on")
-    source_mode = st.radio(
-        "Source",
-        ["Smart Search", "Manual LinkedIn Search", "From saved feeds", "Paste manually"],
-        horizontal=True,
-        key="comment_source_mode",
+    # --- Topic filter search ---
+    st.markdown("##### Find posts to comment on")
+    _render_topic_search(
+        comment_crud=comment_crud,
+        ai_config=ai_config,
+        linkedin_config=linkedin_config,
+        search_feedback_crud=search_feedback_crud,
     )
 
-    target_content = ""
-    target_author = ""
-    target_url = ""
-
-    if source_mode == "Smart Search":
-        target_content, target_author, target_url = _render_smart_search(
-            past_posts, ai_config, linkedin_config,
-        )
-
-    elif source_mode == "Manual LinkedIn Search":
-        target_content, target_author, target_url = _render_linkedin_search(linkedin_config)
-
-    elif source_mode == "From saved feeds":
-        target_content, target_author, target_url = _render_feed_picker(feed_crud)
-
-    else:  # Manual
-        target_author = st.text_input("Post author", key="manual_author")
-        target_content = st.text_area("Post content", height=120, key="manual_content")
-        target_url = st.text_input("Post URL (LinkedIn URL to comment on)", key="manual_url")
-
-    st.divider()
-
-    if st.button(
-        "Generate Comment",
-        type="primary",
-        use_container_width=True,
-        disabled=(not target_content or ai_config is None),
-    ):
-        _generate_comment(
-            target_content=target_content,
-            target_author=target_author,
-            target_url=target_url,
-            past_posts=past_posts,
-            comment_crud=comment_crud,
-            ai_config=ai_config,
-        )
-
 
 # ---------------------------------------------------------------------------
-# Smart Search: LLM extracts keywords -> LinkedIn search -> score & rank
+# Topic-based search: pick topics -> search LinkedIn -> rank -> generate
 # ---------------------------------------------------------------------------
-def _render_smart_search(
-    past_posts: list[dict],
+def _render_topic_search(
+    comment_crud: CommentCRUD,
     ai_config: Optional[AIConfig],
     linkedin_config: Optional[LinkedInConfig],
-) -> tuple[str, str, str]:
-    """Auto-generate search queries from past posts, search LinkedIn, rank results."""
-    if not past_posts:
-        st.warning("Publish some posts first. Smart Search uses your posts to generate search queries.")
-        return "", "", ""
+    search_feedback_crud: Optional[SearchFeedbackCRUD] = None,
+):
     if not ai_config:
         st.warning("AI config not available.")
-        return "", "", ""
+        return
+
+    # Topic selection
+    selected_topics = st.multiselect(
+        "Select topics",
+        list(TOPIC_FILTERS.keys()),
+        default=["GenAI", "LLM"],
+        key="comment_topics",
+    )
+
+    # Optional custom query
+    custom_query = st.text_input(
+        "Or add a custom search term",
+        placeholder="e.g. RAG pipeline, AI in healthcare",
+        key="custom_search_query",
+    )
 
     if st.button("Find posts to comment on", type="primary", use_container_width=True, key="smart_search_btn"):
-        _run_smart_search(past_posts, ai_config, linkedin_config)
+        queries = []
+        for topic in selected_topics:
+            queries.extend(TOPIC_FILTERS[topic])
+        if custom_query.strip():
+            queries.append(custom_query.strip())
+        if not queries:
+            st.warning("Select at least one topic or enter a custom search term.")
+            return
+        _run_topic_search(queries, ai_config, linkedin_config, comment_crud)
 
     # Show ranked results
     ranked = st.session_state.get("smart_search_ranked", [])
     if not ranked:
-        st.caption("Click the button above. The system will: extract keywords from your posts (Nano) -> search LinkedIn -> score & rank results -> show top matches.")
-        return "", "", ""
+        st.caption("Select topics above and click the button. The system will search LinkedIn and rank results by commenting potential.")
+        return
 
-    st.success(f"Found {len(ranked)} posts matching your expertise")
+    st.success(f"Found {len(ranked)} posts. Select posts to generate comments for:")
 
+    # Initialize selection state
+    if "smart_selections" not in st.session_state:
+        st.session_state.smart_selections = {}
+
+    # Select/deselect all
+    col_all, col_none, col_count = st.columns([1, 1, 2])
+    with col_all:
+        if st.button("Select All", key="smart_sel_all"):
+            st.session_state.smart_selections = {i: True for i in range(len(ranked))}
+            st.rerun()
+    with col_none:
+        if st.button("Deselect All", key="smart_desel_all"):
+            st.session_state.smart_selections = {}
+            st.rerun()
+    with col_count:
+        n_selected = sum(1 for v in st.session_state.smart_selections.values() if v)
+        st.caption(f"{n_selected} / {len(ranked)} selected")
+
+    # Render each result with a checkbox
     for i, item in enumerate(ranked):
         with st.container(border=True):
-            col_info, col_score = st.columns([4, 1])
+            col_check, col_info, col_score = st.columns([0.5, 4, 1])
+            with col_check:
+                checked = st.checkbox(
+                    "sel",
+                    value=st.session_state.smart_selections.get(i, False),
+                    key=f"smart_chk_{i}",
+                    label_visibility="collapsed",
+                )
+                st.session_state.smart_selections[i] = checked
             with col_info:
                 st.markdown(f"**{item['author']}**")
                 st.text(item["content"][:300])
@@ -144,50 +165,61 @@ def _render_smart_search(
                 if item.get("reason"):
                     st.caption(item["reason"])
 
-            if st.button("Select this post", key=f"smart_pick_{i}"):
-                st.session_state.smart_selected = item
-                st.rerun()
+    # --- Generate button for selected posts ---
+    selections = st.session_state.get("smart_selections", {})
+    selected_posts = [ranked[i] for i, v in selections.items() if v and i < len(ranked)]
+    selected_indices = {i for i, v in selections.items() if v and i < len(ranked)}
 
-    selected = st.session_state.get("smart_selected")
-    if selected:
-        return selected["content"], selected["author"], selected.get("url", "")
+    if selected_posts:
+        st.divider()
+        if st.button(
+            f"Generate Comments for {len(selected_posts)} Selected Posts",
+            type="primary",
+            use_container_width=True,
+            key="batch_generate_btn",
+        ):
+            # Store selection feedback
+            if search_feedback_crud:
+                queries = st.session_state.get("smart_search_queries", [])
+                search_feedback_crud.record_batch(
+                    search_queries=queries,
+                    ranked_results=ranked,
+                    selected_indices=selected_indices,
+                )
 
-    return "", "", ""
+            # Use past comments as context (not past posts)
+            past_comments = comment_crud.get_recent(limit=20)
+
+            _batch_generate_comments(
+                selected_posts=selected_posts,
+                past_comments=past_comments,
+                comment_crud=comment_crud,
+                ai_config=ai_config,
+            )
+    else:
+        st.divider()
+        st.caption("Select one or more posts above, then click Generate.")
 
 
-def _run_smart_search(
-    past_posts: list[dict],
+def _run_topic_search(
+    queries: list[str],
     ai_config: AIConfig,
     linkedin_config: Optional[LinkedInConfig],
+    comment_crud: Optional[CommentCRUD] = None,
 ):
-    """Full pipeline: extract queries -> search LinkedIn -> rank."""
-    with st.status("Smart Search running...", expanded=True) as status:
+    """Search LinkedIn with topic queries and rank results."""
+    with st.status("Searching...", expanded=True) as status:
         try:
             from src.content.generator import create_ai_provider
-            from src.content.prompts import EXTRACT_SEARCH_QUERIES_PROMPT, RANK_SEARCH_RESULTS_PROMPT
+            from src.content.prompts import RANK_SEARCH_RESULTS_PROMPT
 
             ai = create_ai_provider(ai_config)
 
-            # Step 1: Extract search queries from past posts using fast model
-            posts_text = "\n\n".join(
-                f"Post {i+1}: {p['content'][:300]}"
-                for i, p in enumerate(past_posts[:10])
-            )
+            # Store queries for feedback
+            st.session_state.smart_search_queries = queries
+            st.write(f"Searching for: **{', '.join(queries[:5])}**" + (f" (+{len(queries)-5} more)" if len(queries) > 5 else ""))
 
-            st.write("Step 1: Extracting keywords from your posts (fast model)...")
-            queries_result = ai.generate_fast(
-                "You extract LinkedIn search queries from text. Return only the queries, one per line.",
-                EXTRACT_SEARCH_QUERIES_PROMPT.format(posts_text=posts_text),
-            )
-            queries = [q.strip() for q in queries_result.content.strip().split("\n") if q.strip()]
-            queries = queries[:5]
-            st.write(f"Generated queries: **{', '.join(queries)}**")
-
-            if not queries:
-                status.update(label="No queries generated", state="error")
-                return
-
-            # Step 2: Search LinkedIn for each query
+            # Search LinkedIn
             if not linkedin_config or not linkedin_config.email:
                 st.error("LinkedIn credentials needed for search.")
                 return
@@ -197,7 +229,7 @@ def _run_smart_search(
             from src.automation.linkedin_bot import LinkedInBot
             from src.core.safety_monitor import SafetyMonitor
 
-            st.write("Step 2: Searching LinkedIn...")
+            st.write("Searching LinkedIn...")
 
             async def _do_searches():
                 session = LinkedInSession(
@@ -214,7 +246,8 @@ def _run_smart_search(
                     await bot.login()
                     all_results = []
                     seen_urls = set()
-                    for query in queries:
+                    # Use at most 5 queries to avoid too many requests
+                    for query in queries[:5]:
                         results = await bot.search_posts(query, max_results=5)
                         for r in results:
                             if r.content and r.url not in seen_urls:
@@ -224,17 +257,43 @@ def _run_smart_search(
                     return all_results
 
             raw_results = asyncio.run(_do_searches())
-            st.write(f"Found **{len(raw_results)}** unique posts across {len(queries)} queries")
+            st.write(f"Found **{len(raw_results)}** posts via LinkedIn")
+
+            # Google fallback
+            if not raw_results:
+                st.write("Trying Google fallback...")
+                from src.automation.linkedin_bot import search_linkedin_via_google
+
+                for query in queries[:5]:
+                    google_results = search_linkedin_via_google(query, max_results=10)
+                    for r in google_results:
+                        raw_results.append(r)
+
+                seen = set()
+                deduped = []
+                for r in raw_results:
+                    key = r.url or r.content[:80]
+                    if key not in seen:
+                        seen.add(key)
+                        deduped.append(r)
+                raw_results = deduped
+                st.write(f"Google fallback found **{len(raw_results)}** posts")
 
             if not raw_results:
                 status.update(label="No posts found", state="error")
                 return
 
-            # Step 3: Rank with LLM
-            st.write("Step 3: Ranking posts by relevance to your expertise (fast model)...")
-            expertise_summary = "\n".join(
-                f"- {p['content'][:150]}" for p in past_posts[:5]
-            )
+            # Build expertise context from past comments (not posts)
+            expertise_summary = "GenAI and AI technology professional"
+            if comment_crud:
+                past_comments = comment_crud.get_recent(limit=10)
+                if past_comments:
+                    expertise_summary = "\n".join(
+                        f"- {c['comment_content'][:150]}" for c in past_comments[:5]
+                    )
+
+            # Rank with LLM
+            st.write("Ranking posts by commenting potential...")
             posts_list = "\n\n".join(
                 f"[{i}] {r.author} (posted: {r.published_at or 'unknown'}): {r.content[:200]}"
                 for i, r in enumerate(raw_results)
@@ -250,7 +309,7 @@ def _run_smart_search(
             # Parse ranking
             ranked = []
             if "NONE" in rank_result.content.upper():
-                st.info("LLM found no posts worth commenting on.")
+                st.info("No posts worth commenting on found. Try different topics.")
             else:
                 blocks = rank_result.content.split("---")
                 for block in blocks:
@@ -287,160 +346,71 @@ def _run_smart_search(
 
             ranked.sort(key=lambda x: x["relevance_score"], reverse=True)
             st.session_state.smart_search_ranked = ranked
-            st.session_state.pop("smart_selected", None)
+            st.session_state.smart_selections = {}
 
-            status.update(label=f"Found {len(ranked)} relevant posts!", state="complete")
+            status.update(label=f"Found {len(ranked)} posts to comment on!", state="complete")
             st.rerun()
 
         except Exception as e:
-            status.update(label="Smart Search failed", state="error")
+            status.update(label="Search failed", state="error")
             st.error(f"Error: {e}")
             import traceback
             st.code(traceback.format_exc())
 
 
-def _render_linkedin_search(linkedin_config: Optional[LinkedInConfig]) -> tuple[str, str, str]:
-    """Manual LinkedIn search."""
-    query = st.text_input(
-        "Search LinkedIn posts",
-        placeholder="e.g. AI deployment production MLOps",
-        key="linkedin_search_query",
-    )
-
-    if st.button("Search", key="linkedin_search_btn") and query:
-        if not linkedin_config or not linkedin_config.email:
-            st.error("LinkedIn credentials not configured.")
-            return "", "", ""
-
-        with st.status("Searching LinkedIn...", expanded=True):
-            try:
-                import asyncio
-                from src.automation.session_manager import LinkedInSession
-                from src.automation.linkedin_bot import LinkedInBot
-                from src.core.safety_monitor import SafetyMonitor
-
-                async def _do_search():
-                    session = LinkedInSession(
-                        email=linkedin_config.email,
-                        password=linkedin_config.password,
-                        headless=linkedin_config.headless,
-                        slow_mo=linkedin_config.slow_mo,
-                        profile_dir=linkedin_config.browser_profile_dir,
-                    )
-                    async with session:
-                        bot = LinkedInBot(session, safety_monitor=SafetyMonitor(
-                            hourly_limit=100, daily_limit=100, weekly_limit=500,
-                        ))
-                        await bot.login()
-                        return await bot.search_posts(query, max_results=10)
-
-                results = asyncio.run(_do_search())
-                st.session_state.linkedin_search_results = [
-                    {"author": r.author, "content": r.content, "url": r.url}
-                    for r in results if r.content
-                ]
-                st.success(f"Found {len(st.session_state.linkedin_search_results)} posts")
-            except Exception as e:
-                st.error(f"Search failed: {e}")
-
-    results = st.session_state.get("linkedin_search_results", [])
-    if results:
-        options = {}
-        for i, r in enumerate(results):
-            label = f"{r['author'][:30]}: {r['content'][:70]}..."
-            options[label] = r
-
-        selected_label = st.selectbox("Pick a post", list(options.keys()), key="li_search_pick")
-        selected = options[selected_label]
-
-        with st.container(border=True):
-            st.markdown(f"**{selected['author']}**")
-            st.text(selected["content"][:400])
-            if selected.get("url"):
-                st.caption(selected["url"])
-
-        return selected["content"], selected["author"], selected.get("url", "")
-
-    return "", "", ""
-
-
-def _render_feed_picker(feed_crud: Optional[FeedItemCRUD]) -> tuple[str, str, str]:
-    """Pick from saved feed articles."""
-    feed_posts = []
-    if feed_crud:
-        feed_posts = feed_crud.get_top_scored(limit=20, min_score=5.0)
-
-    if not feed_posts:
-        st.info("No feed articles available. Fetch feeds in the Feed Aggregator tab first.")
-        return "", "", ""
-
-    options = {
-        f"[{fp['final_score']:.0f}] {fp['title'][:80]}": fp
-        for fp in feed_posts
-    }
-    selected_label = st.selectbox("Select a feed article", list(options.keys()), key="comment_feed_sel")
-    selected = options[selected_label]
-
-    with st.container(border=True):
-        st.markdown(f"**{selected['title']}**")
-        st.caption(f"Source: {selected.get('source_name', 'N/A')}")
-        st.text(selected.get("content", "")[:400])
-        if selected.get("url"):
-            st.caption(f"[Open article]({selected['url']})")
-
-    return selected.get("content", ""), selected.get("source_name", "Unknown"), selected.get("url", "")
-
-
-def _generate_comment(
-    target_content: str,
-    target_author: str,
-    target_url: str,
-    past_posts: list[dict],
+def _batch_generate_comments(
+    selected_posts: list[dict],
+    past_comments: list[dict],
     comment_crud: CommentCRUD,
     ai_config: AIConfig,
 ):
-    with st.status("Generating comment...", expanded=True) as status:
+    """Generate comments for multiple selected posts in batch."""
+    with st.status(f"Generating comments for {len(selected_posts)} posts...", expanded=True) as status:
         try:
             from src.content.generator import create_ai_provider
             from src.content.prompts import COMMENT_SYSTEM_PROMPT, COMMENT_TEMPLATES
 
             ai = create_ai_provider(ai_config)
 
-            past_posts_context = ""
-            if past_posts:
-                snippets = [f"- {p['content'][:200]}" for p in past_posts[:10]]
-                past_posts_context = "Your past published LinkedIn posts:\n" + "\n".join(snippets)
+            # Build context from past comments
+            past_context = ""
+            if past_comments:
+                snippets = [f"- {c['comment_content'][:200]}" for c in past_comments[:10]]
+                past_context = "Your previous LinkedIn comments:\n" + "\n".join(snippets)
 
-            strategy = "grounded" if past_posts_context else "generic"
+            strategy = "grounded" if past_context else "generic"
             template = COMMENT_TEMPLATES[strategy]
+            generated = 0
 
-            user_prompt = template.format(
-                author=target_author,
-                post_content=target_content[:1500],
-                past_posts_context=past_posts_context,
-                rag_context="",
-            )
+            for i, post in enumerate(selected_posts):
+                st.write(f"[{i+1}/{len(selected_posts)}] Generating for: {post['author'][:30]} - {post['content'][:50]}...")
 
-            model = ai_config.openai.model if ai_config.provider == "openai" else ai_config.anthropic.model
-            st.write(f"Strategy: **{strategy}** | Model: **{model}**")
+                user_prompt = template.format(
+                    author=post.get("author", "Unknown"),
+                    post_content=post.get("content", "")[:1500],
+                    past_context=past_context,
+                    rag_context="",
+                )
 
-            result = ai.generate_with_confidence(COMMENT_SYSTEM_PROMPT, user_prompt)
+                result = ai.generate_with_confidence(COMMENT_SYSTEM_PROMPT, user_prompt)
 
-            comment_id = comment_crud.create(
-                target_post_url=target_url,
-                comment_content=result.content,
-                target_post_author=target_author,
-                target_post_content=target_content[:500],
-                strategy=strategy,
-                confidence=result.confidence or 0.5,
-            )
+                comment_crud.create(
+                    target_post_url=post.get("url", ""),
+                    comment_content=result.content,
+                    target_post_author=post.get("author", ""),
+                    target_post_content=post.get("content", "")[:500],
+                    strategy=strategy,
+                    confidence=result.confidence or 0.5,
+                )
+                generated += 1
 
-            status.update(label=f"Comment #{comment_id} generated!", state="complete")
+            status.update(label=f"Generated {generated} comments! Go to Review Queue.", state="complete")
+            st.session_state.smart_selections = {}
             st.rerun()
 
         except Exception as e:
-            status.update(label="Generation failed", state="error")
-            st.error(f"LLM API error: {e}")
+            status.update(label="Batch generation failed", state="error")
+            st.error(f"Error: {e}")
             import traceback
             st.code(traceback.format_exc())
 
@@ -480,6 +450,25 @@ def _render_queue_tab(
         return
 
     st.caption(f"Showing {len(comments)} {status_filter} comments")
+
+    # Batch action buttons
+    if status_filter == "draft" and comments:
+        if st.button("Approve All Drafts", key="approve_all_drafts", type="primary"):
+            for c in comments:
+                comment_crud.update_status(c["id"], "approved")
+            st.rerun()
+
+    if status_filter == "approved" and comments:
+        publishable = [c for c in comments if c.get("target_post_url")]
+        if publishable:
+            if st.button(
+                f"Publish All Approved ({len(publishable)})",
+                key="publish_all_approved",
+                type="primary",
+            ):
+                _batch_publish_comments(publishable, comment_crud, linkedin_config)
+        else:
+            st.caption("No approved comments have a target URL to publish to.")
 
     for comment in comments:
         _render_comment_card(comment, comment_crud, linkedin_config)
@@ -598,5 +587,67 @@ def _publish_comment(
         except Exception as e:
             status.update(label="Failed", state="error")
             st.error(f"Publish error: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+
+
+def _batch_publish_comments(
+    comments: list[dict],
+    comment_crud: CommentCRUD,
+    linkedin_config: Optional[LinkedInConfig],
+):
+    """Publish multiple approved comments in a single browser session."""
+    if not linkedin_config or not linkedin_config.email:
+        st.error("LinkedIn credentials not configured.")
+        return
+
+    with st.status(f"Publishing {len(comments)} comments...", expanded=True) as status:
+        try:
+            import asyncio
+            from src.automation.session_manager import LinkedInSession
+            from src.automation.linkedin_bot import LinkedInBot
+            from src.core.safety_monitor import SafetyMonitor
+
+            async def _do_batch():
+                session = LinkedInSession(
+                    email=linkedin_config.email,
+                    password=linkedin_config.password,
+                    headless=linkedin_config.headless,
+                    slow_mo=linkedin_config.slow_mo,
+                    profile_dir=linkedin_config.browser_profile_dir,
+                )
+                async with session:
+                    bot = LinkedInBot(session, safety_monitor=SafetyMonitor(
+                        hourly_limit=100, daily_limit=100, weekly_limit=500,
+                    ))
+                    await bot.login()
+                    published = 0
+                    failed = 0
+                    for c in comments:
+                        try:
+                            ok = await bot.publish_comment(
+                                c["target_post_url"],
+                                c["comment_content"],
+                            )
+                            if ok:
+                                comment_crud.update_status(c["id"], "published")
+                                published += 1
+                            else:
+                                failed += 1
+                        except Exception as e:
+                            failed += 1
+                        await session.wait(3)
+                    return published, failed
+
+            published, failed = asyncio.run(_do_batch())
+            label = f"Published {published}/{len(comments)} comments"
+            if failed:
+                label += f" ({failed} failed)"
+            status.update(label=label, state="complete" if published > 0 else "error")
+            st.rerun()
+
+        except Exception as e:
+            status.update(label="Batch publish failed", state="error")
+            st.error(f"Error: {e}")
             import traceback
             st.code(traceback.format_exc())
