@@ -104,8 +104,8 @@ PRIORITY_2_FEEDS: list[FeedSource] = [
         name="Google AI Blog",
         url="https://blog.google/technology/ai/rss/",
         source_type="rss",
-        priority=2,
-        category="Engineering Research",
+        priority=1,
+        category="Production AI & MLOps",
     ),
     FeedSource(
         name="Meta AI Research",

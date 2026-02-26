@@ -1,8 +1,11 @@
 """
 Vertex AI asset generator for LinkedIn post media.
 
-Uses the google.genai SDK with Imagen 4 for image generation
-and Veo 3.1 for video generation.
+Uses the google.genai SDK. Supports:
+- Gemini models (gemini-*) via generate_content with response_modalities=["IMAGE"]
+- Imagen models (imagen-*) via generate_images
+- Veo models (veo-*) via generate_videos (async with polling)
+
 Requires: gcloud auth application-default login
 """
 
@@ -19,8 +22,8 @@ class AssetGenerator:
     def __init__(
         self,
         project_id: str,
-        location: str = "us-central1",
-        imagen_model: str = "imagen-4.0-generate-001",
+        location: str = "global",
+        imagen_model: str = "gemini-3.1-flash-image-preview",
         veo_model: str = "veo-3.1-generate-001",
     ):
         self.project_id = project_id
@@ -45,20 +48,70 @@ class AssetGenerator:
             )
         return self._client
 
+    def _is_gemini_model(self) -> bool:
+        return self.imagen_model.startswith("gemini")
+
     def generate_image(
         self,
         prompt: str,
         output_dir: str = "data/assets",
         aspect_ratio: str = "1:1",
     ) -> str:
-        """Generate an image with Imagen 4 and save to disk.
+        """Generate an image and save to disk.
+
+        Automatically selects the right API based on model name:
+        - gemini-* models use generate_content with response_modalities=["IMAGE"]
+        - imagen-* models use generate_images
 
         Returns the path to the saved PNG file.
         """
-        from google.genai import types
-
         client = self._get_client()
         logger.info("Generating image with %s: %s", self.imagen_model, prompt[:80])
+
+        if self._is_gemini_model():
+            image_bytes = self._generate_with_gemini(client, prompt, aspect_ratio)
+        else:
+            image_bytes = self._generate_with_imagen(client, prompt, aspect_ratio)
+
+        os.makedirs(output_dir, exist_ok=True)
+        filename = f"imagen_{int(time.time())}.png"
+        filepath = os.path.join(output_dir, filename)
+
+        with open(filepath, "wb") as f:
+            f.write(image_bytes)
+
+        logger.info("Image saved to %s (%d bytes)", filepath, len(image_bytes))
+        return filepath
+
+    def _generate_with_gemini(self, client, prompt: str, aspect_ratio: str) -> bytes:
+        """Use Gemini's generate_content API with IMAGE response modality."""
+        from google.genai import types
+
+        response = client.models.generate_content(
+            model=self.imagen_model,
+            contents=types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=prompt)],
+            ),
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+                image_config=types.ImageConfig(
+                    aspect_ratio=aspect_ratio,
+                    image_size="2K",
+                    output_mime_type="image/png",
+                ),
+            ),
+        )
+
+        for part in response.candidates[0].content.parts:
+            if part.inline_data and part.inline_data.mime_type.startswith("image/"):
+                return part.inline_data.data
+
+        raise RuntimeError("No image returned in Gemini response")
+
+    def _generate_with_imagen(self, client, prompt: str, aspect_ratio: str) -> bytes:
+        """Use Imagen's generate_images API."""
+        from google.genai import types
 
         response = client.models.generate_images(
             model=self.imagen_model,
@@ -71,17 +124,9 @@ class AssetGenerator:
         )
 
         if not response.generated_images:
-            raise RuntimeError("No image returned in response")
+            raise RuntimeError("No image returned in Imagen response")
 
-        os.makedirs(output_dir, exist_ok=True)
-        filename = f"imagen_{int(time.time())}.png"
-        filepath = os.path.join(output_dir, filename)
-
-        with open(filepath, "wb") as f:
-            f.write(response.generated_images[0].image.image_bytes)
-
-        logger.info("Image saved to %s", filepath)
-        return filepath
+        return response.generated_images[0].image.image_bytes
 
     def generate_video(
         self,
