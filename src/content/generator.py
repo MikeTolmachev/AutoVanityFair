@@ -242,6 +242,82 @@ class AnthropicProvider(AIProvider):
         )
 
 
+class VertexAIProvider(AIProvider):
+    """Google Gemini via Vertex AI (google.genai SDK)."""
+
+    def __init__(self, config: AIConfig):
+        from google import genai
+
+        vc = config.vertexai
+        self.client = genai.Client(
+            vertexai=True,
+            project=vc.project_id,
+            location=vc.location,
+        )
+        self.model = vc.model
+        self.fast_model = vc.fast_model
+        self.max_tokens = vc.max_tokens
+        self.temperature = vc.temperature
+        logger.info("VertexAI provider initialized (model=%s, fast=%s, location=%s)",
+                     self.model, self.fast_model, vc.location)
+
+    def _call(self, model: str, system_prompt: str, user_prompt: str,
+              max_tokens: int | None = None, temperature: float | None = None) -> GenerationResult:
+        from google.genai import types
+
+        response = self.client.models.generate_content(
+            model=model,
+            contents=types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=user_prompt)],
+            ),
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                max_output_tokens=max_tokens or self.max_tokens,
+                temperature=temperature if temperature is not None else self.temperature,
+            ),
+        )
+        text = response.text or ""
+        tokens = 0
+        if response.usage_metadata:
+            tokens = (response.usage_metadata.prompt_token_count or 0) + (response.usage_metadata.candidates_token_count or 0)
+        return GenerationResult(
+            content=text.strip(),
+            model=model,
+            provider="vertexai",
+            tokens_used=tokens,
+        )
+
+    @_retry_policy
+    def generate(self, system_prompt: str, user_prompt: str) -> GenerationResult:
+        return self._call(self.model, system_prompt, user_prompt)
+
+    @_retry_policy
+    def generate_with_confidence(
+        self, system_prompt: str, user_prompt: str
+    ) -> GenerationResult:
+        confidence_prompt = (
+            user_prompt
+            + "\n\nAfter your response, on a new line write CONFIDENCE: followed by "
+            "a number between 0.0 and 1.0 indicating how confident you are in the "
+            "quality and relevance of your response."
+        )
+        result = self._call(self.model, system_prompt, confidence_prompt)
+        content, confidence = _parse_confidence(result.content)
+        return GenerationResult(
+            content=content,
+            model=self.model,
+            provider="vertexai",
+            tokens_used=result.tokens_used,
+            confidence=confidence,
+        )
+
+    @_retry_policy
+    def generate_fast(self, system_prompt: str, user_prompt: str) -> GenerationResult:
+        model = self.fast_model or self.model
+        return self._call(model, system_prompt, user_prompt, max_tokens=1024, temperature=0.3)
+
+
 def _parse_confidence(text: str) -> tuple[str, float]:
     """Extract confidence score from generated text."""
     lines = text.strip().split("\n")
@@ -262,7 +338,10 @@ def _parse_confidence(text: str) -> tuple[str, float]:
 
 def create_ai_provider(config: AIConfig) -> AIProvider:
     """Factory function to create the configured AI provider."""
-    if config.provider == "anthropic":
+    if config.provider == "vertexai":
+        logger.info("Using VertexAI provider (model: %s)", config.vertexai.model)
+        return VertexAIProvider(config)
+    elif config.provider == "anthropic":
         logger.info("Using Anthropic provider (model: %s)", config.anthropic.model)
         return AnthropicProvider(config)
     else:

@@ -23,10 +23,20 @@ class AnthropicConfig(BaseModel):
     temperature: float = 0.7
 
 
+class VertexAITextConfig(BaseModel):
+    project_id: str = ""
+    location: str = "global"
+    model: str = "gemini-2.5-pro"
+    fast_model: str = "gemini-2.5-flash"
+    max_tokens: int = 8192
+    temperature: float = 0.7
+
+
 class AIConfig(BaseModel):
-    provider: str = "openai"
+    provider: str = "vertexai"  # "openai", "anthropic", or "vertexai"
     openai: OpenAIConfig = OpenAIConfig()
     anthropic: AnthropicConfig = AnthropicConfig()
+    vertexai: VertexAITextConfig = VertexAITextConfig()
 
 
 class PostScheduleConfig(BaseModel):

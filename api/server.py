@@ -946,9 +946,15 @@ def _mask_email(email: str) -> str:
 def get_settings():
     config: ConfigManager = _get("config")
     ai = config.ai
-    api_key = ai.openai.api_key if ai.provider == "openai" else ai.anthropic.api_key
-    key_status = "Configured" if api_key and len(api_key) > 4 else "Not set"
-    model = ai.openai.model if ai.provider == "openai" else ai.anthropic.model
+    if ai.provider == "vertexai":
+        model = ai.vertexai.model
+        key_status = "Configured" if ai.vertexai.project_id else "Not set"
+    elif ai.provider == "anthropic":
+        model = ai.anthropic.model
+        key_status = "Configured" if ai.anthropic.api_key and len(ai.anthropic.api_key) > 4 else "Not set"
+    else:
+        model = ai.openai.model
+        key_status = "Configured" if ai.openai.api_key and len(ai.openai.api_key) > 4 else "Not set"
 
     return {
         "ai": {
