@@ -654,6 +654,11 @@ label {
 .feed-card.liked { border-left: 3px solid var(--success); }
 .feed-card.disliked { border-left: 3px solid var(--error); opacity: 0.5; }
 
+.feed-card.dismissing {
+  animation: dismissCard 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  pointer-events: none;
+}
+
 .feed-keywords {
   display: flex;
   gap: 5px;
@@ -697,6 +702,12 @@ label {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+@keyframes dismissCard {
+  0%   { opacity: 1; transform: translateX(0) scale(1); max-height: 600px; margin-bottom: 12px; }
+  40%  { opacity: 0.6; transform: translateX(30px) scale(0.98); }
+  100% { opacity: 0; transform: translateX(80px) scale(0.95); max-height: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; border-width: 0; overflow: hidden; }
 }
 
 /* Staggered card entry */
@@ -1067,12 +1078,12 @@ async function renderFeeds(el) {
       <div style="font-size:0.78rem;color:var(--text-2)">Sources: <strong style="color:var(--text-0)">${Object.keys(sources).length}</strong></div>
     </div>
 
-    <div id="feed-items-container">
-      ${renderFeedItems(items)}
-    </div>
+    <div id="feed-items-container"></div>
   `;
 
   window._feedItems = items;
+  // Apply default view filter (unlabeled)
+  filterFeedView();
 }
 
 function renderFeedItems(items) {
@@ -1084,7 +1095,7 @@ function renderFeedItems(items) {
     const keywords = Array.isArray(item.matched_keywords) ? item.matched_keywords : [];
 
     return `
-      <div class="content-card feed-card ${fbClass}" style="animation-delay:${Math.min(i * 0.03, 0.3)}s">
+      <div class="content-card feed-card ${fbClass}" data-feed-id="${item.id}" style="animation-delay:${Math.min(i * 0.03, 0.3)}s">
         <div class="content-card-header">
           <div style="flex:1">
             <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px">${escapeHtml(item.title)}</div>

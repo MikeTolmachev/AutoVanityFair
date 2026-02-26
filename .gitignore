@@ -22,6 +22,7 @@ dist/
 build/
 
 # IDE
+.claude/
 .idea/
 .vscode/
 *.swp
