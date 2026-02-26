@@ -13,6 +13,9 @@ external/
 # Browser profiles
 browser_profile/
 
+# ML training artifacts
+catboost_info/
+
 # Python
 __pycache__/
 *.pyc
