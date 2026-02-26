@@ -5,6 +5,7 @@ Serves the JSON API at /api/* and the web frontend from /web/.
 """
 
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -92,7 +93,7 @@ async def auth_middleware(request: Request, call_next):
     """Require bearer token for /api/* routes when OPENLINKEDIN_API_TOKEN is set."""
     if API_TOKEN and request.url.path.startswith("/api/"):
         auth = request.headers.get("authorization", "")
-        if not auth.startswith("Bearer ") or auth[7:] != API_TOKEN:
+        if not auth.startswith("Bearer ") or not hmac.compare_digest(auth[7:], API_TOKEN):
             from fastapi.responses import JSONResponse
             return JSONResponse(status_code=401, content={"detail": "Invalid or missing API token"})
     return await call_next(request)
@@ -447,7 +448,10 @@ async def upload_post_asset(post_id: int, request: Request):
         os.makedirs("data/assets", exist_ok=True)
         save_path = f"data/assets/post_{post_id}.{ext}"
 
+        MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
         content = await file.read()
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, "File too large (max 50 MB)")
         with open(save_path, "wb") as f:
             f.write(content)
 
@@ -776,8 +780,8 @@ def feed_source_counts():
 
 @app.post("/api/feed/fetch")
 def fetch_feeds(
-    min_score: float = 10.0,
-    max_results: int = 100,
+    min_score: float = Query(default=10.0, ge=0, le=100),
+    max_results: int = Query(default=100, ge=1, le=1000),
     priorities: Optional[str] = None,
 ):
     """Fetch RSS feeds, score, and persist. priorities is comma-separated like '1,2'."""
