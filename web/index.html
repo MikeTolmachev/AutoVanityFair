@@ -1074,7 +1074,7 @@ async function renderFeeds(el) {
     </div>
 
     <div style="display:flex;gap:20px;margin-bottom:20px;flex-wrap:wrap">
-      <div style="font-size:0.78rem;color:var(--text-2)">Total items: <strong style="color:var(--text-0)">${items.length}</strong></div>
+      <div id="feed-count-display" style="font-size:0.78rem;color:var(--text-2)">Showing ${items.length} items</div>
       <div style="font-size:0.78rem;color:var(--text-2)">Sources: <strong style="color:var(--text-0)">${Object.keys(sources).length}</strong></div>
     </div>
 
@@ -1125,13 +1125,21 @@ function renderFeedItems(items) {
 }
 
 function filterFeedView() {
-  const view = document.getElementById('feed-view').value;
+  const view = document.getElementById('feed-view')?.value || 'unlabeled';
   const items = window._feedItems || [];
   let filtered;
   if (view === 'liked') filtered = items.filter(i => i.feedback === 'liked');
   else if (view === 'unlabeled') filtered = items.filter(i => !i.feedback);
   else filtered = items;
-  document.getElementById('feed-items-container').innerHTML = renderFeedItems(filtered);
+
+  const container = document.getElementById('feed-items-container');
+  if (container) {
+    container.innerHTML = renderFeedItems(filtered);
+  }
+
+  // Update the count display if present
+  const countEl = document.getElementById('feed-count-display');
+  if (countEl) countEl.textContent = `Showing ${filtered.length} of ${items.length} items`;
 }
 
 async function fetchFeeds() {
@@ -1151,9 +1159,26 @@ async function fetchFeeds() {
 async function feedFeedback(itemId, feedback, btn) {
   try {
     await api(`/feed/${itemId}/feedback`, { method: 'POST', body: { feedback } });
-    toast(feedback === 'liked' ? 'Liked!' : 'Disliked', 'success');
-    // Refresh the page
-    navigate('feeds');
+
+    // Update local data
+    const item = (window._feedItems || []).find(i => i.id === itemId);
+    if (item) item.feedback = feedback;
+
+    const currentView = document.getElementById('feed-view')?.value || 'unlabeled';
+
+    // In unlabeled view, animate the card away since it's no longer unlabeled
+    if (currentView === 'unlabeled') {
+      const card = document.querySelector(`[data-feed-id="${itemId}"]`);
+      if (card) {
+        card.classList.add('dismissing');
+        card.addEventListener('animationend', () => card.remove(), { once: true });
+      }
+      toast(feedback === 'liked' ? 'Liked!' : 'Disliked', 'success');
+    } else {
+      // In other views, just re-render in place to update button states
+      toast(feedback === 'liked' ? 'Liked!' : 'Disliked', 'success');
+      filterFeedView();
+    }
   } catch (e) {
     toast(`Feedback failed: ${e.message}`, 'error');
   }
