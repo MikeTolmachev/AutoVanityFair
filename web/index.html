@@ -1518,8 +1518,14 @@ function renderPostCard(post, i) {
       <div style="background:var(--bg-3);border-radius:var(--radius-sm);padding:14px;margin:12px 0;border:1px solid var(--border)">
         <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-2);margin-bottom:10px">Post Asset</div>
         ${post.asset_path ? `
-          <div style="margin-bottom:10px;font-size:0.8rem;color:var(--success)">Attached: ${escapeHtml(post.asset_type || 'file')} &mdash; ${escapeHtml(post.asset_path?.split('/').pop() || '')}</div>
-          <button class="btn btn-sm btn-danger" onclick="removeAsset(${post.id})">Remove Asset</button>
+          ${post.asset_type === 'video'
+            ? `<video src="/assets/${escapeHtml(post.asset_path.split('/').pop() || '')}" controls style="max-width:100%;max-height:300px;border-radius:var(--radius-sm);margin-bottom:10px"></video>`
+            : `<img src="/assets/${escapeHtml(post.asset_path.split('/').pop() || '')}" alt="Post asset" style="max-width:100%;max-height:300px;border-radius:var(--radius-sm);margin-bottom:10px;display:block">`
+          }
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="font-size:0.78rem;color:var(--success)">${escapeHtml(post.asset_type || 'file')} attached</span>
+            <button class="btn btn-sm btn-danger" onclick="removeAsset(${post.id})">Remove</button>
+          </div>
         ` : `
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
             <div style="flex:1;min-width:200px">

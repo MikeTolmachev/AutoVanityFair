@@ -1000,3 +1000,8 @@ def serve_index():
 # Mount static files last so API routes take priority
 if os.path.isdir(WEB_DIR):
     app.mount("/web", StaticFiles(directory=WEB_DIR), name="web")
+
+# Serve generated assets (images/videos)
+ASSETS_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "assets")
+os.makedirs(ASSETS_DIR, exist_ok=True)
+app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
