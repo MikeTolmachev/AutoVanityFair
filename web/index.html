@@ -833,13 +833,54 @@ label {
    ============================================================= */
 const API = '/api';
 
+function getToken() {
+  return localStorage.getItem('openlinkedin_token') || '';
+}
+
+function promptForToken() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Authentication Required</h3>
+      <p style="color:var(--text-2);font-size:0.84rem;margin-bottom:16px">Enter your API token (OPENLINKEDIN_API_TOKEN).</p>
+      <div class="form-group">
+        <label>API Token</label>
+        <input type="password" id="auth-token-input" placeholder="Paste your token here">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="saveToken()">Authenticate</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('auth-token-input')?.focus();
+}
+
+function saveToken() {
+  const token = document.getElementById('auth-token-input')?.value?.trim();
+  if (token) {
+    localStorage.setItem('openlinkedin_token', token);
+    document.querySelector('.modal-overlay')?.remove();
+    navigate(currentPage);
+    refreshSidebarStats();
+  }
+}
+
 async function api(path, opts = {}) {
   const url = API + path;
-  const config = { headers: { 'Content-Type': 'application/json' }, ...opts };
+  const headers = { 'Content-Type': 'application/json' };
+  const token = getToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const config = { headers, ...opts };
   if (config.body && typeof config.body === 'object') {
     config.body = JSON.stringify(config.body);
   }
   const res = await fetch(url, config);
+  if (res.status === 401) {
+    promptForToken();
+    throw new Error('Authentication required');
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || `HTTP ${res.status}`);
@@ -873,6 +914,12 @@ function truncate(str, len = 300) {
 function escapeHtml(str) {
   if (!str) return '';
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function safeUrl(url) {
+  if (!url) return '#';
+  try { const u = new URL(url); return ['http:', 'https:'].includes(u.protocol) ? url : '#'; }
+  catch { return '#'; }
 }
 
 /* =============================================================
@@ -982,7 +1029,7 @@ async function renderDashboard(el) {
           ${logs.length ? logs.map(l => `
             <div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:0.78rem">
               <span style="color:${l.status==='success' ? 'var(--success)' : 'var(--error)'}">${l.status === 'success' ? '+' : 'x'}</span>
-              <span style="color:var(--text-2)">${l.created_at || ''}</span>
+              <span style="color:var(--text-2)">${escapeHtml(l.created_at || '')}</span>
               <span style="color:var(--text-1);font-weight:500"> ${escapeHtml(l.action_type)}</span>
               <span style="color:var(--text-2)"> ${escapeHtml(l.details || '')}</span>
             </div>
@@ -1117,7 +1164,7 @@ function renderFeedItems(items) {
             ${fb === 'disliked' ? 'Disliked' : 'Dislike'}
           </button>
           <button class="btn btn-sm btn-secondary" onclick="saveFeedToLibrary(${i})">Save to Library</button>
-          ${item.url ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener" style="font-size:0.76rem;margin-left:auto">Open article</a>` : ''}
+          ${item.url ? `<a href="${escapeHtml(safeUrl(item.url))}" target="_blank" rel="noopener" style="font-size:0.76rem;margin-left:auto">Open article</a>` : ''}
         </div>
       </div>
     `;
@@ -1247,8 +1294,8 @@ function renderLibraryCard(doc, i) {
         <div style="flex:1">
           <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px">${escapeHtml(doc.title)}</div>
           <div class="content-card-meta">
-            ${doc.source ? truncate(doc.source, 60) : ''}
-            ${tags.length ? ' &middot; ' + tags.join(', ') : ''}
+            ${doc.source ? escapeHtml(truncate(doc.source, 60)) : ''}
+            ${tags.length ? ' &middot; ' + tags.map(t => escapeHtml(t)).join(', ') : ''}
           </div>
         </div>
         <div style="display:flex;gap:6px">
@@ -1274,7 +1321,7 @@ async function openLibraryDoc(docId) {
         <button class="btn btn-secondary btn-sm" onclick="navigate('library')">&larr; Back</button>
         <h2 style="font-size:1.5rem">${escapeHtml(doc.title)}</h2>
       </div>
-      ${doc.source ? `<p style="margin-top:4px"><a href="${escapeHtml(doc.source)}" target="_blank" rel="noopener">${truncate(doc.source, 80)}</a></p>` : ''}
+      ${doc.source ? `<p style="margin-top:4px"><a href="${escapeHtml(safeUrl(doc.source))}" target="_blank" rel="noopener">${escapeHtml(truncate(doc.source, 80))}</a></p>` : ''}
     </div>
 
     <div class="card" style="margin-bottom:20px">
@@ -1467,7 +1514,7 @@ function renderPostCard(post, i) {
   } else if (status === 'published') {
     actions = `
       <button class="btn btn-sm btn-secondary" onclick="updatePostStatus(${post.id},'approved')">Repost</button>
-      ${post.linkedin_url ? `<a href="${escapeHtml(post.linkedin_url)}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary">View on LinkedIn</a>` : ''}
+      ${post.linkedin_url ? `<a href="${escapeHtml(safeUrl(post.linkedin_url))}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary">View on LinkedIn</a>` : ''}
     `;
   } else if (status === 'rejected') {
     actions = `<button class="btn btn-sm btn-secondary" onclick="updatePostStatus(${post.id},'draft')">Move to Draft</button>`;
@@ -1477,10 +1524,10 @@ function renderPostCard(post, i) {
     <div class="content-card" style="animation-delay:${Math.min(i * 0.03, 0.3)}s">
       <div class="content-card-header">
         <div class="content-card-meta">
-          Strategy: <strong>${escapeHtml(post.strategy || 'N/A')}</strong> &middot; Created: ${post.created_at || ''}
-          ${post.published_at ? ` &middot; Published: ${post.published_at}` : ''}
+          Strategy: <strong>${escapeHtml(post.strategy || 'N/A')}</strong> &middot; Created: ${escapeHtml(post.created_at || '')}
+          ${post.published_at ? ` &middot; Published: ${escapeHtml(post.published_at)}` : ''}
         </div>
-        <span class="${badgeClass(status)}">${status}</span>
+        <span class="${badgeClass(escapeHtml(status))}">${escapeHtml(status)}</span>
       </div>
       <div class="content-card-body">${escapeHtml(post.content || '')}</div>
       <div class="content-card-footer">
@@ -1598,15 +1645,15 @@ function renderCommentCard(comment, i) {
         <div class="content-card-meta">
           Strategy: <strong>${escapeHtml(comment.strategy || 'N/A')}</strong>
           &middot; Confidence: <strong>${((comment.confidence || 0) * 100).toFixed(0)}%</strong>
-          &middot; ${comment.created_at || ''}
+          &middot; ${escapeHtml(comment.created_at || '')}
         </div>
-        <span class="${badgeClass(status)}">${status}</span>
+        <span class="${badgeClass(escapeHtml(status))}">${escapeHtml(status)}</span>
       </div>
       ${comment.target_post_content ? `
         <div style="background:var(--bg-3);border-radius:var(--radius-sm);padding:12px;margin-bottom:12px;font-size:0.82rem">
           <div style="color:var(--text-2);margin-bottom:4px;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em">Target Post by ${escapeHtml(comment.target_post_author || 'Unknown')}</div>
           <div style="color:var(--text-1)">${truncate(escapeHtml(comment.target_post_content), 250)}</div>
-          ${comment.target_post_url ? `<a href="${escapeHtml(comment.target_post_url)}" target="_blank" rel="noopener" style="font-size:0.72rem;margin-top:6px;display:inline-block">View on LinkedIn</a>` : ''}
+          ${comment.target_post_url ? `<a href="${escapeHtml(safeUrl(comment.target_post_url))}" target="_blank" rel="noopener" style="font-size:0.72rem;margin-top:6px;display:inline-block">View on LinkedIn</a>` : ''}
         </div>
       ` : ''}
       <div style="font-weight:500;margin-bottom:14px;font-size:0.9rem;color:var(--text-0);line-height:1.6">${escapeHtml(comment.comment_content || '')}</div>
@@ -1710,7 +1757,7 @@ async function renderAnalytics(el) {
               <div class="bar-col">
                 <div class="bar-value">${count}</div>
                 <div class="bar" style="height:${(count/maxStatus)*100}%;background:var(--accent-muted);border-color:var(--border-accent)"></div>
-                <div class="bar-label">${status}</div>
+                <div class="bar-label">${escapeHtml(status)}</div>
               </div>
             `).join('')}
           </div>
@@ -1725,7 +1772,7 @@ async function renderAnalytics(el) {
               <div class="bar-col">
                 <div class="bar-value">${count}</div>
                 <div class="bar" style="height:${(count/maxAction)*100}%;background:var(--info-bg);border-color:rgba(96,165,250,0.2)"></div>
-                <div class="bar-label">${action.replace(/_/g, ' ')}</div>
+                <div class="bar-label">${escapeHtml(action.replace(/_/g, ' '))}</div>
               </div>
             `).join('')}
           </div>
@@ -1739,7 +1786,7 @@ async function renderAnalytics(el) {
         ${(data.recent_activity || []).map(l => `
           <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:0.8rem;display:flex;gap:12px;align-items:center">
             <span style="color:${l.status==='success' ? 'var(--success)' : 'var(--error)'};font-weight:700;width:18px;text-align:center">${l.status === 'success' ? '+' : 'x'}</span>
-            <span style="color:var(--text-2);font-family:var(--font-mono);font-size:0.72rem;white-space:nowrap">${l.created_at || ''}</span>
+            <span style="color:var(--text-2);font-family:var(--font-mono);font-size:0.72rem;white-space:nowrap">${escapeHtml(l.created_at || '')}</span>
             <span style="color:var(--text-0);font-weight:500">${escapeHtml(l.action_type)}</span>
             <span style="color:var(--text-2);flex:1">${escapeHtml(l.details || '')}</span>
           </div>
@@ -1766,14 +1813,13 @@ async function renderSettings(el) {
         <h3 style="font-family:var(--font-heading);font-size:1.1rem;margin-bottom:16px">AI Provider</h3>
         ${settingRow('Provider', settings.ai.provider)}
         ${settingRow('Model', settings.ai.model)}
-        ${settingRow('API Key', settings.ai.api_key_masked)}
+        ${settingRow('API Key', settings.ai.api_key_status)}
       </div>
 
       <div class="card">
         <h3 style="font-family:var(--font-heading);font-size:1.1rem;margin-bottom:16px">LinkedIn</h3>
         ${settingRow('Account', settings.linkedin.email)}
         ${settingRow('Headless', String(settings.linkedin.headless))}
-        ${settingRow('Profile Dir', settings.linkedin.profile_dir)}
       </div>
     </div>
 

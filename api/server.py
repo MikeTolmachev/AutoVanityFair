@@ -6,15 +6,28 @@ Serves the JSON API at /api/* and the web frontend from /web/.
 
 import hashlib
 import json
+import logging
 import os
 import sys
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+logger = logging.getLogger("openlinkedin.api")
+
+# ---------------------------------------------------------------------------
+# Authentication
+# ---------------------------------------------------------------------------
+# Set OPENLINKEDIN_API_TOKEN in .env to require bearer-token auth on all
+# /api/* endpoints.  When the variable is empty or unset, auth is disabled
+# (convenient for local development).
+# ---------------------------------------------------------------------------
+
+API_TOKEN: Optional[str] = os.environ.get("OPENLINKEDIN_API_TOKEN", "").strip() or None
 
 # Ensure project root is on path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -72,6 +85,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="OpenLinkedIn API", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """Require bearer token for /api/* routes when OPENLINKEDIN_API_TOKEN is set."""
+    if API_TOKEN and request.url.path.startswith("/api/"):
+        auth = request.headers.get("authorization", "")
+        if not auth.startswith("Bearer ") or auth[7:] != API_TOKEN:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=401, content={"detail": "Invalid or missing API token"})
+    return await call_next(request)
 
 # ---------------------------------------------------------------------------
 # Pydantic request models
@@ -151,7 +175,7 @@ def get_stats():
 
 
 @app.get("/api/posts")
-def list_posts(status: str = "draft", limit: int = 50):
+def list_posts(status: str = "draft", limit: int = Query(default=50, ge=1, le=500)):
     crud: PostCRUD = _get("post_crud")
     posts = crud.list_by_status(status, limit=limit)
     # Parse rag_sources JSON strings
@@ -211,7 +235,8 @@ def generate_post(body: GeneratePostBody):
         log_crud.log("generate_post", details=f"Post #{post_id} generated via web UI")
         return {"id": post_id, "content": result["content"], "strategy": result["strategy"]}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        logger.exception("Request failed")
+        raise HTTPException(500, "Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +245,7 @@ def generate_post(body: GeneratePostBody):
 
 
 @app.get("/api/comments")
-def list_comments(status: str = "draft", limit: int = 50):
+def list_comments(status: str = "draft", limit: int = Query(default=50, ge=1, le=500)):
     crud: CommentCRUD = _get("comment_crud")
     return crud.list_by_status(status, limit=limit)
 
@@ -265,7 +290,7 @@ def approve_all_draft_comments():
 
 
 @app.get("/api/library")
-def list_library(limit: int = 100):
+def list_library(limit: int = Query(default=100, ge=1, le=500)):
     crud: ContentLibraryCRUD = _get("content_crud")
     docs = crud.list_all(limit=limit)
     for d in docs:
@@ -363,7 +388,8 @@ def generate_post_from_library(doc_id: int):
         crud.update_generated_post(doc_id, title, body)
         return {"title": title, "body": body, "tokens_used": result.tokens_used}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        logger.exception("Request failed")
+        raise HTTPException(500, "Internal server error")
 
 
 @app.post("/api/library/{doc_id}/to-queue")
@@ -393,7 +419,7 @@ def send_to_post_queue(doc_id: int):
 @app.get("/api/feed")
 def list_feed_items(
     min_score: float = 0.0,
-    limit: int = 100,
+    limit: int = Query(default=100, ge=1, le=500),
     source: Optional[str] = None,
 ):
     feed_crud: FeedItemCRUD = _get("feed_crud")
@@ -490,7 +516,8 @@ def fetch_feeds(
 
         return {"fetched": len(scored), "persisted": persisted}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        logger.exception("Request failed")
+        raise HTTPException(500, "Internal server error")
 
 
 @app.post("/api/feed/{item_id}/feedback")
@@ -544,7 +571,8 @@ def retrain_reranker():
         result = reranker.train(training_data, feedback_map)
         return result
     except Exception as e:
-        raise HTTPException(500, str(e))
+        logger.exception("Request failed")
+        raise HTTPException(500, "Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -583,19 +611,27 @@ def get_analytics():
 # ---------------------------------------------------------------------------
 
 
+def _mask_email(email: str) -> str:
+    if "@" not in email:
+        return "***"
+    local, domain = email.split("@", 1)
+    masked = local[0] + "***" if local else "***"
+    return f"{masked}@{domain}"
+
+
 @app.get("/api/settings")
 def get_settings():
     config: ConfigManager = _get("config")
     ai = config.ai
     api_key = ai.openai.api_key if ai.provider == "openai" else ai.anthropic.api_key
-    masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "Not set"
+    key_status = "Configured" if api_key and len(api_key) > 4 else "Not set"
     model = ai.openai.model if ai.provider == "openai" else ai.anthropic.model
 
     return {
         "ai": {
             "provider": ai.provider,
             "model": model,
-            "api_key_masked": masked_key,
+            "api_key_status": key_status,
         },
         "scheduling": {
             "timezone": config.scheduling.timezone,
@@ -613,9 +649,8 @@ def get_settings():
             "cooldown_minutes": config.safety.cooldown_minutes,
         },
         "linkedin": {
-            "email": config.linkedin.email or "Not configured",
+            "email": _mask_email(config.linkedin.email) if config.linkedin.email else "Not configured",
             "headless": config.linkedin.headless,
-            "profile_dir": config.linkedin.browser_profile_dir,
         },
     }
 
@@ -626,7 +661,7 @@ def get_settings():
 
 
 @app.get("/api/logs")
-def get_logs(limit: int = 50):
+def get_logs(limit: int = Query(default=50, ge=1, le=200)):
     log_crud: InteractionLogCRUD = _get("log_crud")
     return log_crud.get_recent(limit=limit)
 
