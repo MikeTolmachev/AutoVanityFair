@@ -795,12 +795,8 @@ label {
 
     <div class="sidebar-stats" id="sidebar-stats">
       <div class="stat-row">
-        <span class="label">Drafts</span>
-        <span class="value" id="stat-drafts">--</span>
-      </div>
-      <div class="stat-row">
-        <span class="label">Approved</span>
-        <span class="value" id="stat-approved">--</span>
+        <span class="label">For Review</span>
+        <span class="value" id="stat-for-review">--</span>
       </div>
       <div class="stat-row">
         <span class="label">Published</span>
@@ -959,8 +955,8 @@ async function renderPage(page) {
 async function refreshSidebarStats() {
   try {
     const stats = await api('/stats');
-    document.getElementById('stat-drafts').textContent = stats.posts.draft || 0;
-    document.getElementById('stat-approved').textContent = stats.posts.approved || 0;
+    const forReview = (stats.posts.draft || 0) + (stats.posts.approved || 0);
+    document.getElementById('stat-for-review').textContent = forReview;
     document.getElementById('stat-published').textContent = stats.posts.published || 0;
     document.getElementById('stat-comments').textContent = stats.comments_today || 0;
   } catch(e) { /* silent */ }
@@ -1470,8 +1466,27 @@ async function submitAddDoc() {
    POSTS QUEUE
    ============================================================= */
 async function renderPosts(el) {
-  const status = window._postsStatusFilter || 'draft';
-  const posts = await api(`/posts?status=${status}`);
+  const filter = window._postsStatusFilter || 'for_review';
+  let posts;
+  let filterLabel;
+  if (filter === 'for_review') {
+    const [drafts, approved] = await Promise.all([
+      api('/posts?status=draft'),
+      api('/posts?status=approved'),
+    ]);
+    posts = [...drafts, ...approved];
+    filterLabel = 'for review';
+  } else {
+    posts = await api(`/posts?status=${encodeURIComponent(filter)}`);
+    filterLabel = filter;
+  }
+
+  // All values below are either static strings or from escapeHtml — safe for innerHTML
+  const filterOptions = [
+    { value: 'for_review', label: 'For Review' },
+    { value: 'published', label: 'Published' },
+    { value: 'rejected', label: 'Rejected' },
+  ];
 
   el.innerHTML = `
     <div class="page-header">
@@ -1483,14 +1498,14 @@ async function renderPosts(el) {
       <div class="filter-group">
         <label>Status</label>
         <select id="posts-status-filter" onchange="window._postsStatusFilter=this.value;navigate('posts')" style="width:160px">
-          ${['draft','approved','published','rejected'].map(s => `<option value="${s}" ${s === status ? 'selected' : ''}>${s.charAt(0).toUpperCase() + s.slice(1)}</option>`).join('')}
+          ${filterOptions.map(o => `<option value="${escapeHtml(o.value)}" ${o.value === filter ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
         </select>
       </div>
-      <div style="font-size:0.78rem;color:var(--text-2);align-self:center">${posts.length} ${status} posts</div>
+      <div style="font-size:0.78rem;color:var(--text-2);align-self:center">${posts.length} ${escapeHtml(filterLabel)} posts</div>
     </div>
 
     <div id="posts-container">
-      ${posts.length ? posts.map((p, i) => renderPostCard(p, i)).join('') : `<div class="empty-state"><p>No ${status} posts found.</p></div>`}
+      ${posts.length ? posts.map((p, i) => renderPostCard(p, i)).join('') : `<div class="empty-state"><p>No ${escapeHtml(filterLabel)} posts found.</p></div>`}
     </div>
   `;
 }
@@ -1735,8 +1750,30 @@ async function uploadAsset(postId, fileInput) {
    COMMENTS
    ============================================================= */
 async function renderComments(el) {
-  const status = window._commentsStatusFilter || 'draft';
-  const comments = await api(`/comments?status=${status}`);
+  const filter = window._commentsStatusFilter || 'for_review';
+  let comments;
+  let filterLabel;
+  if (filter === 'for_review') {
+    const [drafts, approved] = await Promise.all([
+      api('/comments?status=draft'),
+      api('/comments?status=approved'),
+    ]);
+    comments = [...drafts, ...approved];
+    filterLabel = 'for review';
+  } else {
+    comments = await api(`/comments?status=${encodeURIComponent(filter)}`);
+    filterLabel = filter;
+  }
+
+  const hasDrafts = comments.some(c => c.status === 'draft');
+  const hasApproved = comments.some(c => c.status === 'approved' && c.target_post_url);
+
+  // All values below are either static strings or from escapeHtml — safe for innerHTML
+  const filterOptions = [
+    { value: 'for_review', label: 'For Review' },
+    { value: 'published', label: 'Published' },
+    { value: 'rejected', label: 'Rejected' },
+  ];
 
   el.innerHTML = `
     <div class="page-header">
@@ -1748,16 +1785,16 @@ async function renderComments(el) {
       <div class="filter-group">
         <label>Status</label>
         <select id="comments-status-filter" onchange="window._commentsStatusFilter=this.value;navigate('comments')" style="width:160px">
-          ${['draft','approved','published','rejected'].map(s => `<option value="${s}" ${s === status ? 'selected' : ''}>${s.charAt(0).toUpperCase() + s.slice(1)}</option>`).join('')}
+          ${filterOptions.map(o => `<option value="${escapeHtml(o.value)}" ${o.value === filter ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
         </select>
       </div>
-      <div style="font-size:0.78rem;color:var(--text-2);align-self:center">${comments.length} ${status} comments</div>
-      ${status === 'draft' && comments.length ? `<button class="btn btn-success btn-sm" onclick="approveAllDrafts()">Approve All Drafts</button>` : ''}
-      ${status === 'approved' && comments.length ? `<button class="btn btn-primary btn-sm" onclick="publishAllApproved()">Publish All to LinkedIn</button>` : ''}
+      <div style="font-size:0.78rem;color:var(--text-2);align-self:center">${comments.length} ${escapeHtml(filterLabel)} comments</div>
+      ${hasDrafts ? `<button class="btn btn-success btn-sm" onclick="approveAllDrafts()">Approve All Drafts</button>` : ''}
+      ${hasApproved ? `<button class="btn btn-primary btn-sm" onclick="publishAllApproved()">Publish All to LinkedIn</button>` : ''}
     </div>
 
     <div id="comments-container">
-      ${comments.length ? comments.map((c, i) => renderCommentCard(c, i)).join('') : `<div class="empty-state"><p>No ${status} comments found.</p></div>`}
+      ${comments.length ? comments.map((c, i) => renderCommentCard(c, i)).join('') : `<div class="empty-state"><p>No ${escapeHtml(filterLabel)} comments found.</p></div>`}
     </div>
   `;
 }
