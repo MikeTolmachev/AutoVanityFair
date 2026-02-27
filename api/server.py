@@ -506,6 +506,55 @@ def approve_all_draft_comments():
     return {"ok": True, "count": len(drafts)}
 
 
+@app.post("/api/comments/regenerate-drafts")
+def regenerate_draft_comments():
+    """Regenerate all draft and approved comments using the current prompt."""
+    config: ConfigManager = _get("config")
+    crud: CommentCRUD = _get("comment_crud")
+    log_crud: InteractionLogCRUD = _get("log_crud")
+
+    try:
+        from src.content.generator import create_ai_provider
+        from src.content.comment_generator import CommentGenerator
+
+        ai = create_ai_provider(config.ai)
+        generator = CommentGenerator(ai_provider=ai)
+
+        # Gather draft + approved comments that have target post content
+        drafts = crud.list_by_status("draft")
+        approved = crud.list_by_status("approved")
+        to_regenerate = [
+            c for c in drafts + approved
+            if c.get("target_post_content")
+        ]
+
+        if not to_regenerate:
+            return {"ok": True, "regenerated": 0, "message": "No comments with target post content to regenerate"}
+
+        # Use recent published comments for voice matching
+        past_comments = [
+            c for c in crud.get_recent(limit=20)
+            if c.get("status") == "published"
+        ]
+
+        regenerated = 0
+        for comment in to_regenerate:
+            result = generator.generate(
+                post_content=comment["target_post_content"],
+                post_author=comment.get("target_post_author") or "Unknown",
+                post_url=comment.get("target_post_url") or "",
+                past_comments=past_comments,
+            )
+            crud.update_content(comment["id"], result["content"])
+            regenerated += 1
+
+        log_crud.log("regenerate_comments", details=f"Regenerated {regenerated} comments")
+        return {"ok": True, "regenerated": regenerated}
+    except Exception:
+        logger.exception("Request failed")
+        raise HTTPException(500, "Internal server error")
+
+
 @app.post("/api/comments/{comment_id}/publish")
 async def publish_comment(comment_id: int):
     """Publish a single approved comment to LinkedIn."""

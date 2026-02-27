@@ -1767,6 +1767,7 @@ async function renderComments(el) {
 
   const hasDrafts = comments.some(c => c.status === 'draft');
   const hasApproved = comments.some(c => c.status === 'approved' && c.target_post_url);
+  const hasRegeneratable = comments.some(c => c.target_post_content && (c.status === 'draft' || c.status === 'approved'));
 
   // All values below are either static strings or from escapeHtml — safe for innerHTML
   const filterOptions = [
@@ -1789,6 +1790,7 @@ async function renderComments(el) {
         </select>
       </div>
       <div style="font-size:0.78rem;color:var(--text-2);align-self:center">${comments.length} ${escapeHtml(filterLabel)} comments</div>
+      ${hasRegeneratable ? `<button class="btn btn-secondary btn-sm" onclick="regenerateAllComments()">Regenerate All</button>` : ''}
       ${hasDrafts ? `<button class="btn btn-success btn-sm" onclick="approveAllDrafts()">Approve All Drafts</button>` : ''}
       ${hasApproved ? `<button class="btn btn-primary btn-sm" onclick="publishAllApproved()">Publish All to LinkedIn</button>` : ''}
     </div>
@@ -1851,6 +1853,22 @@ async function updateCommentStatus(commentId, status) {
     navigate('comments');
   } catch (e) {
     toast(`Failed: ${e.message}`, 'error');
+  }
+}
+
+async function regenerateAllComments() {
+  if (!confirm('Regenerate all draft and approved comments? This will overwrite current comment text.')) return;
+  toast('Regenerating comments...', 'info');
+  try {
+    const result = await api('/comments/regenerate-drafts', { method: 'POST' });
+    if (result.regenerated > 0) {
+      toast(`Regenerated ${result.regenerated} comments`, 'success');
+    } else {
+      toast(result.message || 'No comments to regenerate', 'info');
+    }
+    navigate('comments');
+  } catch (e) {
+    toast(`Regeneration failed: ${e.message}`, 'error');
   }
 }
 
