@@ -921,10 +921,11 @@ function safeUrl(url) {
 /* =============================================================
    NAVIGATION / ROUTER
    ============================================================= */
-let currentPage = 'dashboard';
+let currentPage = localStorage.getItem('openlinkedin_page') || 'dashboard';
 
 function navigate(page) {
   currentPage = page;
+  localStorage.setItem('openlinkedin_page', page);
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.dataset.page === page);
   });
@@ -2091,7 +2092,7 @@ function settingRow(label, value) {
    INIT
    ============================================================= */
 document.addEventListener('DOMContentLoaded', () => {
-  navigate('dashboard');
+  navigate(currentPage);
   refreshSidebarStats();
   // Refresh stats every 30s
   setInterval(refreshSidebarStats, 30000);
