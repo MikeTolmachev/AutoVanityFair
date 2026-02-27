@@ -36,6 +36,56 @@ async def build_playwright(headless: bool = False, slow_mo: int = 50, profile_di
     return pw, browser
 
 
+async def paste_content(page, editor, text: str) -> None:
+    """Insert text into a contenteditable editor instantly via JS evaluation.
+
+    Much faster than human_type() and immune to focus-stealing overlays.
+    Falls back to clipboard paste if JS injection doesn't stick.
+    """
+    # Approach 1: Set innerText via JS and dispatch input event
+    await editor.focus()
+    await page.wait_for_timeout(300)
+
+    await editor.evaluate("""(el, text) => {
+        el.innerText = text;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    }""", text)
+    await page.wait_for_timeout(500)
+
+    # Verify content was inserted
+    actual = await editor.evaluate("el => el.innerText")
+    actual_stripped = (actual or "").strip()
+    expected_stripped = text.strip()
+
+    if len(actual_stripped) >= len(expected_stripped) * 0.8:
+        logger.info("paste_content: JS injection succeeded (%d chars)", len(actual_stripped))
+        return
+
+    # Approach 2: Clipboard paste fallback
+    logger.warning("paste_content: JS injection incomplete (%d/%d chars), trying clipboard paste",
+                   len(actual_stripped), len(expected_stripped))
+
+    # Clear any partial content
+    await editor.evaluate("el => { el.innerText = ''; }")
+    await editor.focus()
+    await page.wait_for_timeout(200)
+
+    await page.evaluate("text => navigator.clipboard.writeText(text)", text)
+    await page.keyboard.press("Meta+v")
+    await page.wait_for_timeout(500)
+
+    # Final verification
+    actual = await editor.evaluate("el => el.innerText")
+    actual_stripped = (actual or "").strip()
+    if len(actual_stripped) >= len(expected_stripped) * 0.5:
+        logger.info("paste_content: clipboard paste succeeded (%d chars)", len(actual_stripped))
+    else:
+        logger.error("paste_content: both approaches failed (got %d chars, expected ~%d)",
+                     len(actual_stripped), len(expected_stripped))
+        raise RuntimeError(f"Failed to insert content into editor (got {len(actual_stripped)} chars)")
+
+
 async def human_type(page, text: str) -> None:
     """Type text character-by-character with human-like delays into the currently focused element."""
     for char in text:

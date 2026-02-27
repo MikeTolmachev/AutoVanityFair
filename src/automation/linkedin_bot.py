@@ -3,11 +3,13 @@ LinkedInBot -- high-level LinkedIn actions with robust selectors and logging.
 """
 
 import logging
+import os
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 
-from src.automation.openoutreach_adapter import human_type, goto_page, playwright_login
+from src.automation.openoutreach_adapter import human_type, paste_content, goto_page, playwright_login
 from src.automation.session_manager import LinkedInSession
 from src.automation.feed_scraper import FeedScraper, FeedPost
 from src.core.safety_monitor import SafetyMonitor
@@ -110,6 +112,20 @@ class LinkedInBot:
         self.safety = safety_monitor or SafetyMonitor()
         self.scraper = FeedScraper(session)
 
+    async def _take_debug_screenshot(self, step_name: str) -> str | None:
+        """Save a timestamped screenshot to data/debug/ for post-mortem analysis."""
+        try:
+            debug_dir = "data/debug"
+            os.makedirs(debug_dir, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{debug_dir}/{ts}_{step_name}.png"
+            await self.session.page.screenshot(path=filename, full_page=False)
+            logger.info("Debug screenshot saved: %s", filename)
+            return filename
+        except Exception as e:
+            logger.warning("Failed to save debug screenshot: %s", e)
+            return None
+
     async def login(self) -> bool:
         """Log into LinkedIn."""
         try:
@@ -122,7 +138,11 @@ class LinkedInBot:
             raise
 
     async def publish_post(self, content: str, asset_path: str = "") -> bool:
-        """Publish a post to LinkedIn, optionally with a media attachment."""
+        """Publish a post to LinkedIn, optionally with a media attachment.
+
+        Uses instant JS injection (paste_content) instead of character-by-character
+        typing to avoid focus-steal issues from LinkedIn overlays.
+        """
         if not self.safety.can_act():
             logger.warning("Safety monitor blocked post publishing")
             return False
@@ -133,12 +153,12 @@ class LinkedInBot:
         page = self.session.page
 
         # Step 1: Go to feed
-        logger.info("Step 1: Navigating to feed...")
+        logger.info("Step 1/6: Navigating to feed...")
         await goto_page(page, "https://www.linkedin.com/feed/")
         await page.wait_for_timeout(2000)
 
         # Step 2: Click "Start a post"
-        logger.info("Step 2: Looking for 'Start a post' button...")
+        logger.info("Step 2/6: Looking for 'Start a post' button...")
         start_selectors = [
             'button:has-text("Start a post")',
             'button[aria-label*="Start a post"]',
@@ -160,13 +180,14 @@ class LinkedInBot:
 
         if not clicked:
             logger.error("Could not find 'Start a post' button")
+            await self._take_debug_screenshot("start_post_not_found")
             self.safety.record_error()
             return False
 
         await page.wait_for_timeout(2000)
 
-        # Step 3: Find and type in editor
-        logger.info("Step 3: Finding post editor...")
+        # Step 3: Find editor
+        logger.info("Step 3/6: Finding post editor...")
         editor_selectors = [
             'div[role="textbox"][contenteditable="true"]',
             'div.ql-editor[contenteditable="true"]',
@@ -187,22 +208,22 @@ class LinkedInBot:
 
         if not editor:
             logger.error("Could not find post editor")
+            await self._take_debug_screenshot("editor_not_found")
             self.safety.record_error()
             return False
 
-        await editor.click()
-        await page.wait_for_timeout(500)
+        # Step 4: Paste content instantly (no char-by-char typing)
+        logger.info("Step 4/6: Pasting post content (%d chars)...", len(content))
+        try:
+            await paste_content(page, editor, content)
+        except RuntimeError:
+            await self._take_debug_screenshot("paste_content_failed")
+            self.safety.record_error()
+            return False
 
-        # Type content FIRST, before uploading media
-        # This avoids the issue where file upload dialogs steal focus
-        # and the typed text goes into the wrong place
-        logger.info("Step 3b: Typing post content (%d chars)...", len(content))
-        await human_type(page, content)
-        await page.wait_for_timeout(500)
-
-        # Upload media asset AFTER typing content
+        # Step 5: Upload media asset (after content is in place)
         if asset_path:
-            logger.info("Step 3c: Uploading media asset: %s", asset_path)
+            logger.info("Step 5/6: Uploading media asset: %s", asset_path)
             try:
                 media_selectors = [
                     'button[aria-label*="Add media"]',
@@ -222,19 +243,16 @@ class LinkedInBot:
                         continue
 
                 if media_btn:
-                    # Use expect_file_chooser to intercept the OS dialog
-                    # This prevents the native file picker from blocking Playwright
                     async with page.expect_file_chooser() as fc_info:
                         await media_btn.click()
                     file_chooser = await fc_info.value
                     await file_chooser.set_files(asset_path)
                     logger.info("File set via file_chooser, waiting for upload...")
 
-                    # Wait for the image to upload and appear in the editor
+                    # Wait for the image preview to appear
                     await page.wait_for_timeout(3000)
                     upload_done = False
                     for wait_attempt in range(15):
-                        # Check for thumbnail/preview indicators
                         preview_selectors = [
                             'div.share-media-upload-manager__preview',
                             'img.share-media-upload-manager__image',
@@ -257,10 +275,18 @@ class LinkedInBot:
 
                     if not upload_done:
                         logger.warning("Could not detect upload preview, waiting 5s fallback")
+                        await self._take_debug_screenshot("upload_preview_not_detected")
                         await page.wait_for_timeout(5000)
 
-                    # Dismiss any upload overlay/modal (Done/Next buttons)
-                    for dismiss_sel in ['button[aria-label="Done"]', 'button:has-text("Done")', 'button:has-text("Next")']:
+                    # Dismiss crop/edit overlay if LinkedIn shows one
+                    crop_selectors = [
+                        'button[aria-label="Done"]',
+                        'button:has-text("Done")',
+                        'button:has-text("Next")',
+                        'button:has-text("Apply")',
+                        'button[aria-label="Done cropping"]',
+                    ]
+                    for dismiss_sel in crop_selectors:
                         try:
                             dismiss_btn = page.locator(dismiss_sel).first
                             if await dismiss_btn.is_visible(timeout=1000):
@@ -272,25 +298,36 @@ class LinkedInBot:
                             continue
                 else:
                     logger.warning("Could not find media upload button, posting without asset")
+                    await self._take_debug_screenshot("media_button_not_found")
             except Exception as e:
                 logger.warning("Media upload failed, posting without asset: %s", e)
+                await self._take_debug_screenshot("media_upload_error")
+        else:
+            logger.info("Step 5/6: No asset to upload, skipping.")
 
-        # Dispatch input/change events so LinkedIn's React editor recognizes the content
+        # Re-dispatch events so LinkedIn's React editor registers the content
         await editor.evaluate("""el => {
             el.dispatchEvent(new Event('input', { bubbles: true }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
         }""")
         await page.wait_for_timeout(1500)
 
-        # Step 5: Click Post button -- wait for it to become enabled
-        logger.info("Step 5: Waiting for Post button to become enabled...")
+        # Verify editor still has content (overlays may have cleared it)
+        actual = await editor.evaluate("el => (el.innerText || '').trim()")
+        if len(actual) < len(content.strip()) * 0.5:
+            logger.error("Editor content lost after media upload (%d chars remaining)", len(actual))
+            await self._take_debug_screenshot("content_lost")
+            self.safety.record_error()
+            return False
+
+        # Step 6: Click Post button
+        logger.info("Step 6/6: Waiting for Post button to become enabled...")
         post_selectors = [
             'button.share-actions__primary-action:not([disabled])',
             'button[aria-label="Post"]:not([disabled])',
             'button:has-text("Post"):not([disabled])',
         ]
         post_clicked = False
-        # Retry up to 5 times (10 seconds total) waiting for the button to enable
         for attempt in range(5):
             for sel in post_selectors:
                 try:
@@ -305,15 +342,14 @@ class LinkedInBot:
             if post_clicked:
                 break
             logger.info("Post button not enabled yet, retrying... (%d/5)", attempt + 1)
-            # Nudge the editor again
-            if editor:
-                await editor.evaluate("""el => {
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                }""")
+            await editor.evaluate("""el => {
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+            }""")
             await page.wait_for_timeout(2000)
 
         if not post_clicked:
             logger.error("Post button never became enabled after 5 attempts")
+            await self._take_debug_screenshot("post_button_disabled")
             self.safety.record_error()
             return False
 

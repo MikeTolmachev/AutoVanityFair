@@ -113,7 +113,7 @@ class AssetGenerator:
                 )],
                 image_config=types.ImageConfig(
                     aspect_ratio=aspect_ratio,
-                    image_size="2K",
+                    image_size="4K",
                     output_mime_type="image/png",
                 ),
                 thinking_config=types.ThinkingConfig(
