@@ -193,9 +193,16 @@ class LinkedInBot:
         await editor.click()
         await page.wait_for_timeout(500)
 
-        # Upload media asset if provided
+        # Type content FIRST, before uploading media
+        # This avoids the issue where file upload dialogs steal focus
+        # and the typed text goes into the wrong place
+        logger.info("Step 3b: Typing post content (%d chars)...", len(content))
+        await human_type(page, content)
+        await page.wait_for_timeout(500)
+
+        # Upload media asset AFTER typing content
         if asset_path:
-            logger.info("Uploading media asset: %s", asset_path)
+            logger.info("Step 3c: Uploading media asset: %s", asset_path)
             try:
                 media_selectors = [
                     'button[aria-label*="Add media"]',
@@ -217,21 +224,55 @@ class LinkedInBot:
 
                 if media_clicked:
                     await page.wait_for_timeout(1500)
-                    # LinkedIn uses a hidden file input for uploads
+                    # LinkedIn uses a hidden file input -- set_input_files bypasses the OS dialog
                     file_input = page.locator('input[type="file"]').first
                     await file_input.set_input_files(asset_path)
-                    logger.info("File selected, waiting for upload...")
-                    # Wait for the upload to process
-                    await page.wait_for_timeout(5000)
+                    logger.info("File selected, waiting for upload to process...")
+
+                    # Wait for the image thumbnail to appear (up to 30s for large files)
+                    upload_done = False
+                    for wait_attempt in range(15):
+                        await page.wait_for_timeout(2000)
+                        # Check for thumbnail/preview indicators
+                        preview_selectors = [
+                            'div.share-media-upload-manager__preview',
+                            'img.share-media-upload-manager__image',
+                            'div[class*="media-preview"]',
+                            'div[class*="upload"] img',
+                            '.share-creation-state__media-container img',
+                        ]
+                        for ps in preview_selectors:
+                            try:
+                                if await page.locator(ps).first.is_visible(timeout=500):
+                                    upload_done = True
+                                    logger.info("Upload preview detected via: %s", ps)
+                                    break
+                            except Exception:
+                                continue
+                        if upload_done:
+                            break
+                        logger.info("Waiting for upload... (%d/15)", wait_attempt + 1)
+
+                    if not upload_done:
+                        # Fallback: just wait a fixed 5s more and hope for the best
+                        logger.warning("Could not detect upload preview, waiting 5s fallback")
+                        await page.wait_for_timeout(5000)
+
+                    # Dismiss any upload overlay/modal that might still be open
+                    for dismiss_sel in ['button[aria-label="Done"]', 'button:has-text("Done")', 'button:has-text("Next")']:
+                        try:
+                            dismiss_btn = page.locator(dismiss_sel).first
+                            if await dismiss_btn.is_visible(timeout=1000):
+                                await dismiss_btn.click()
+                                logger.info("Dismissed upload overlay via: %s", dismiss_sel)
+                                await page.wait_for_timeout(1000)
+                                break
+                        except Exception:
+                            continue
                 else:
                     logger.warning("Could not find media upload button, posting without asset")
             except Exception as e:
                 logger.warning("Media upload failed, posting without asset: %s", e)
-
-        # Type content with human-like speed
-        logger.info("Step 4: Typing post content (%d chars)...", len(content))
-        await human_type(page, content)
-        await page.wait_for_timeout(500)
 
         # Dispatch input/change events so LinkedIn's React editor recognizes the content
         await editor.evaluate("""el => {
