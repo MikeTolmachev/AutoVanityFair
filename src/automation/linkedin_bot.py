@@ -210,29 +210,30 @@ class LinkedInBot:
                     'button[aria-label*="photo"]',
                     'button.share-creation-state__action-button:has(li-icon[type="image"])',
                 ]
-                media_clicked = False
+                media_btn = None
                 for sel in media_selectors:
                     try:
                         el = page.locator(sel).first
                         if await el.is_visible(timeout=2000):
-                            await el.click()
-                            media_clicked = True
-                            logger.info("Clicked media button via: %s", sel)
+                            media_btn = el
+                            logger.info("Found media button via: %s", sel)
                             break
                     except Exception:
                         continue
 
-                if media_clicked:
-                    await page.wait_for_timeout(1500)
-                    # LinkedIn uses a hidden file input -- set_input_files bypasses the OS dialog
-                    file_input = page.locator('input[type="file"]').first
-                    await file_input.set_input_files(asset_path)
-                    logger.info("File selected, waiting for upload to process...")
+                if media_btn:
+                    # Use expect_file_chooser to intercept the OS dialog
+                    # This prevents the native file picker from blocking Playwright
+                    async with page.expect_file_chooser() as fc_info:
+                        await media_btn.click()
+                    file_chooser = await fc_info.value
+                    await file_chooser.set_files(asset_path)
+                    logger.info("File set via file_chooser, waiting for upload...")
 
-                    # Wait for the image thumbnail to appear (up to 30s for large files)
+                    # Wait for the image to upload and appear in the editor
+                    await page.wait_for_timeout(3000)
                     upload_done = False
                     for wait_attempt in range(15):
-                        await page.wait_for_timeout(2000)
                         # Check for thumbnail/preview indicators
                         preview_selectors = [
                             'div.share-media-upload-manager__preview',
@@ -252,13 +253,13 @@ class LinkedInBot:
                         if upload_done:
                             break
                         logger.info("Waiting for upload... (%d/15)", wait_attempt + 1)
+                        await page.wait_for_timeout(2000)
 
                     if not upload_done:
-                        # Fallback: just wait a fixed 5s more and hope for the best
                         logger.warning("Could not detect upload preview, waiting 5s fallback")
                         await page.wait_for_timeout(5000)
 
-                    # Dismiss any upload overlay/modal that might still be open
+                    # Dismiss any upload overlay/modal (Done/Next buttons)
                     for dismiss_sel in ['button[aria-label="Done"]', 'button:has-text("Done")', 'button:has-text("Next")']:
                         try:
                             dismiss_btn = page.locator(dismiss_sel).first
