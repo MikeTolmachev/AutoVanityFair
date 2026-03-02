@@ -152,9 +152,12 @@ class LinkedInBot:
 
         page = self.session.page
 
-        # Step 1: Go to feed
-        logger.info("Step 1/6: Navigating to feed...")
-        await goto_page(page, "https://www.linkedin.com/feed/")
+        # Step 1: Go to feed (skip if already there after login)
+        if "/feed" in page.url and "login" not in page.url:
+            logger.info("Step 1/6: Already on feed, skipping navigation")
+        else:
+            logger.info("Step 1/6: Navigating to feed...")
+            await goto_page(page, "https://www.linkedin.com/feed/")
         await page.wait_for_timeout(2000)
 
         # Step 2: Click "Start a post"
@@ -214,12 +217,16 @@ class LinkedInBot:
 
         # Step 4: Paste content instantly (no char-by-char typing)
         logger.info("Step 4/6: Pasting post content (%d chars)...", len(content))
+        await page.wait_for_timeout(1000)
         try:
             await paste_content(page, editor, content)
         except RuntimeError:
             await self._take_debug_screenshot("paste_content_failed")
             self.safety.record_error()
             return False
+
+        # Pause before next step to let LinkedIn process pasted content
+        await page.wait_for_timeout(1000)
 
         # Step 5: Upload media asset (after content is in place)
         if asset_path:
@@ -249,53 +256,34 @@ class LinkedInBot:
                     await file_chooser.set_files(asset_path)
                     logger.info("File set via file_chooser, waiting for upload...")
 
-                    # Wait for the image preview to appear
-                    await page.wait_for_timeout(3000)
-                    upload_done = False
-                    for wait_attempt in range(15):
-                        preview_selectors = [
-                            'div.share-media-upload-manager__preview',
-                            'img.share-media-upload-manager__image',
-                            'div[class*="media-preview"]',
-                            'div[class*="upload"] img',
-                            '.share-creation-state__media-container img',
+                    # Wait for image upload to complete
+                    logger.info("Waiting 5s for image upload...")
+                    await page.wait_for_timeout(5000)
+
+                    # Dismiss crop/edit overlay — LinkedIn may show a multi-step Editor
+                    # (e.g. crop → alt text → done). Click through all steps.
+                    for overlay_step in range(5):
+                        dismiss_selectors = [
+                            'button:has-text("Next")',
+                            'button:has-text("Done")',
+                            'button[aria-label="Done"]',
+                            'button:has-text("Apply")',
+                            'button[aria-label="Done cropping"]',
                         ]
-                        for ps in preview_selectors:
+                        dismissed = False
+                        for dismiss_sel in dismiss_selectors:
                             try:
-                                if await page.locator(ps).first.is_visible(timeout=500):
-                                    upload_done = True
-                                    logger.info("Upload preview detected via: %s", ps)
+                                dismiss_btn = page.locator(dismiss_sel).first
+                                if await dismiss_btn.is_visible(timeout=1000):
+                                    await dismiss_btn.click()
+                                    logger.info("Dismissed overlay step %d via: %s", overlay_step + 1, dismiss_sel)
+                                    await page.wait_for_timeout(1000)
+                                    dismissed = True
                                     break
                             except Exception:
                                 continue
-                        if upload_done:
+                        if not dismissed:
                             break
-                        logger.info("Waiting for upload... (%d/15)", wait_attempt + 1)
-                        await page.wait_for_timeout(2000)
-
-                    if not upload_done:
-                        logger.warning("Could not detect upload preview, waiting 5s fallback")
-                        await self._take_debug_screenshot("upload_preview_not_detected")
-                        await page.wait_for_timeout(5000)
-
-                    # Dismiss crop/edit overlay if LinkedIn shows one
-                    crop_selectors = [
-                        'button[aria-label="Done"]',
-                        'button:has-text("Done")',
-                        'button:has-text("Next")',
-                        'button:has-text("Apply")',
-                        'button[aria-label="Done cropping"]',
-                    ]
-                    for dismiss_sel in crop_selectors:
-                        try:
-                            dismiss_btn = page.locator(dismiss_sel).first
-                            if await dismiss_btn.is_visible(timeout=1000):
-                                await dismiss_btn.click()
-                                logger.info("Dismissed upload overlay via: %s", dismiss_sel)
-                                await page.wait_for_timeout(1000)
-                                break
-                        except Exception:
-                            continue
                 else:
                     logger.warning("Could not find media upload button, posting without asset")
                     await self._take_debug_screenshot("media_button_not_found")
@@ -304,6 +292,9 @@ class LinkedInBot:
                 await self._take_debug_screenshot("media_upload_error")
         else:
             logger.info("Step 5/6: No asset to upload, skipping.")
+
+        # Pause before final verification
+        await page.wait_for_timeout(1000)
 
         # Re-dispatch events so LinkedIn's React editor registers the content
         await editor.evaluate("""el => {
@@ -322,38 +313,72 @@ class LinkedInBot:
 
         # Step 6: Click Post button
         logger.info("Step 6/6: Waiting for Post button to become enabled...")
+        await self._take_debug_screenshot("before_post_click")
         post_selectors = [
-            'button.share-actions__primary-action:not([disabled])',
-            'button[aria-label="Post"]:not([disabled])',
-            'button:has-text("Post"):not([disabled])',
+            'button.share-actions__primary-action',
+            'button[aria-label="Post"]',
+            'button:has-text("Post")',
+            'button.artdeco-button--primary:has-text("Post")',
+            'button.share-actions__primary-action.artdeco-button--primary',
         ]
         post_clicked = False
         for attempt in range(5):
             for sel in post_selectors:
                 try:
                     el = page.locator(sel).first
-                    if await el.is_visible(timeout=1000) and await el.is_enabled(timeout=1000):
-                        await el.click()
+                    if await el.is_visible(timeout=1000):
+                        # Force-click even if LinkedIn thinks it's disabled
+                        await el.click(force=True)
                         post_clicked = True
                         logger.info("Clicked Post via: %s (attempt %d)", sel, attempt + 1)
                         break
-                except Exception:
+                except Exception as exc:
+                    logger.debug("Post selector %s failed: %s", sel, exc)
                     continue
             if post_clicked:
                 break
-            logger.info("Post button not enabled yet, retrying... (%d/5)", attempt + 1)
+            logger.info("Post button not found/enabled yet, retrying... (%d/5)", attempt + 1)
+            # Re-trigger input events to wake up LinkedIn's editor state
             await editor.evaluate("""el => {
                 el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
             }""")
             await page.wait_for_timeout(2000)
 
         if not post_clicked:
-            logger.error("Post button never became enabled after 5 attempts")
-            await self._take_debug_screenshot("post_button_disabled")
+            logger.error("Post button never became clickable after 5 attempts")
+            await self._take_debug_screenshot("post_button_failed")
             self.safety.record_error()
             return False
 
-        await page.wait_for_timeout(4000)
+        # Wait for LinkedIn to finish publishing (modal disappears when done).
+        # With images this can take 10-20 seconds.
+        logger.info("Waiting for post to finish publishing...")
+        modal_selectors = [
+            'div.share-creation-state__text-editor',
+            'div[role="dialog"] div[contenteditable="true"]',
+            'div.share-box_actions',
+        ]
+        published = False
+        for wait_i in range(15):
+            await page.wait_for_timeout(2000)
+            still_open = False
+            for ms in modal_selectors:
+                try:
+                    if await page.locator(ms).first.is_visible(timeout=500):
+                        still_open = True
+                        break
+                except Exception:
+                    continue
+            if not still_open:
+                published = True
+                logger.info("Compose modal closed after %ds — post published", (wait_i + 1) * 2)
+                break
+            logger.info("Still publishing... (%d/15)", wait_i + 1)
+
+        if not published:
+            logger.warning("Compose modal still visible after 30s — taking screenshot")
+            await self._take_debug_screenshot("post_publish_timeout")
 
         self.safety.record_action()
         logger.info("Post published successfully")

@@ -9,6 +9,7 @@ Uses the google.genai SDK. Supports:
 Requires: gcloud auth application-default login
 """
 
+import io
 import logging
 import os
 import time
@@ -57,13 +58,16 @@ class AssetGenerator:
         output_dir: str = "data/assets",
         aspect_ratio: str = "1:1",
     ) -> str:
-        """Generate an image and save to disk.
+        """Generate an image and save to disk as high-quality JPEG.
 
         Automatically selects the right API based on model name:
         - gemini-* models use generate_content with response_modalities=["IMAGE"]
         - imagen-* models use generate_images
 
-        Returns the path to the saved PNG file.
+        The raw PNG from the API is converted to JPEG (quality 95) for smaller
+        file size and full LinkedIn compatibility.
+
+        Returns the path to the saved JPEG file.
         """
         client = self._get_client()
         logger.info("Generating image with %s: %s", self.imagen_model, prompt[:80])
@@ -74,13 +78,41 @@ class AssetGenerator:
             image_bytes = self._generate_with_imagen(client, prompt, aspect_ratio)
 
         os.makedirs(output_dir, exist_ok=True)
-        filename = f"imagen_{int(time.time())}.png"
+        filepath = self._save_as_jpeg(image_bytes, output_dir)
+        return filepath
+
+    @staticmethod
+    def _save_as_jpeg(
+        png_bytes: bytes,
+        output_dir: str,
+        quality: int = 95,
+    ) -> str:
+        """Convert raw PNG bytes to high-quality JPEG and save to disk."""
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(png_bytes))
+        # PNG may have alpha channel — flatten onto white background for JPEG
+        if img.mode in ("RGBA", "LA", "PA"):
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            background.paste(img, mask=img.split()[-1])
+            img = background
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        filename = f"imagen_{int(time.time())}.jpg"
         filepath = os.path.join(output_dir, filename)
+        img.save(filepath, format="JPEG", quality=quality, optimize=True)
 
-        with open(filepath, "wb") as f:
-            f.write(image_bytes)
-
-        logger.info("Image saved to %s (%d bytes)", filepath, len(image_bytes))
+        png_size = len(png_bytes)
+        jpg_size = os.path.getsize(filepath)
+        ratio = (1 - jpg_size / png_size) * 100 if png_size else 0
+        logger.info(
+            "Image saved to %s (PNG %d KB → JPEG %d KB, %.0f%% smaller)",
+            filepath,
+            png_size // 1024,
+            jpg_size // 1024,
+            ratio,
+        )
         return filepath
 
     def _generate_with_gemini(self, client, prompt: str, aspect_ratio: str) -> bytes:

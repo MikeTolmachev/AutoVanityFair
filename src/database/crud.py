@@ -174,6 +174,14 @@ class CommentCRUD:
                 (content, comment_id),
             )
 
+    def reject_all(self) -> int:
+        """Reject all draft and approved comments. Returns count affected."""
+        with self.db.connect() as conn:
+            cursor = conn.execute(
+                "UPDATE comments SET status = 'rejected', updated_at = datetime('now') WHERE status IN ('draft', 'approved')"
+            )
+            return cursor.rowcount
+
     def count_published_today(self) -> int:
         with self.db.connect() as conn:
             row = conn.execute(
@@ -312,6 +320,7 @@ class FeedItemCRUD:
         content_type: str = "",
         matched_keywords: Optional[list[str]] = None,
         matched_categories: Optional[list[str]] = None,
+        embedding: Optional[list[float]] = None,
     ) -> int:
         with self.db.connect() as conn:
             cursor = conn.execute(
@@ -319,10 +328,11 @@ class FeedItemCRUD:
                    (item_hash, title, content, url, source_name, source_category,
                     author, published_at, production_score, executive_score,
                     keyword_score, final_score, content_type,
-                    matched_keywords, matched_categories)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    matched_keywords, matched_categories, embedding)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(item_hash) DO UPDATE SET
                     final_score = excluded.final_score,
+                    embedding = COALESCE(excluded.embedding, feed_items.embedding),
                     fetched_at = datetime('now')""",
                 (
                     item_hash,
@@ -340,9 +350,18 @@ class FeedItemCRUD:
                     content_type,
                     json.dumps(matched_keywords) if matched_keywords else None,
                     json.dumps(matched_categories) if matched_categories else None,
+                    json.dumps(embedding) if embedding else None,
                 ),
             )
             return cursor.lastrowid
+
+    def update_embedding(self, item_id: int, embedding: list[float]) -> None:
+        """Store a computed embedding for a feed item."""
+        with self.db.connect() as conn:
+            conn.execute(
+                "UPDATE feed_items SET embedding = ? WHERE id = ?",
+                (json.dumps(embedding), item_id),
+            )
 
     def get_top_scored(self, limit: int = 20, min_score: float = 0.0) -> list[dict]:
         with self.db.connect() as conn:

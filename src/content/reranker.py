@@ -13,8 +13,12 @@ import logging
 import os
 
 from src.content.content_filter import ScoredContent
+from src.content.embeddings import DEFAULT_DIMENSIONALITY
 
 logger = logging.getLogger("openlinkedin.reranker")
+
+EMBEDDING_DIM = DEFAULT_DIMENSIONALITY
+EMBEDDING_FEATURE_NAMES = [f"emb_{i}" for i in range(EMBEDDING_DIM)]
 
 FEATURE_NAMES = [
     "production_score",
@@ -28,7 +32,7 @@ FEATURE_NAMES = [
     "num_matched_categories",
     "has_url",
     "rule_based_score",
-]
+] + EMBEDDING_FEATURE_NAMES
 
 CAT_FEATURE_NAMES = [
     "content_type",
@@ -81,7 +85,7 @@ class FeedReranker:
 
     def extract_features_from_db_row(self, row: dict) -> dict:
         """Extract feature dict from a database feed_items row."""
-        return {
+        d = {
             "production_score": row.get("production_score", 0.0),
             "executive_score": row.get("executive_score", 0.0),
             "keyword_score": row.get("keyword_score", 0.0),
@@ -104,6 +108,16 @@ class FeedReranker:
             "content_type": row.get("content_type", "general"),
             "source": row.get("source_name", ""),
         }
+        # Parse stored embedding or zero-fill
+        emb = [0.0] * EMBEDDING_DIM
+        if row.get("embedding"):
+            try:
+                emb = json.loads(row["embedding"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        for i in range(EMBEDDING_DIM):
+            d[f"emb_{i}"] = emb[i] if i < len(emb) else 0.0
+        return d
 
     def train(
         self,

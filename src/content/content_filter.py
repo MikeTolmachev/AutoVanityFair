@@ -84,7 +84,9 @@ class ScoredContent:
 
     def to_feature_dict(self) -> dict:
         """Extract feature vector for ML reranker."""
-        return {
+        from src.content.embeddings import DEFAULT_DIMENSIONALITY
+
+        d = {
             "production_score": self.production_score,
             "executive_score": self.executive_score,
             "keyword_score": self.keyword_score,
@@ -99,6 +101,10 @@ class ScoredContent:
             "content_type": self.content_type.value,
             "source": self.source,
         }
+        # Embedding features — zero-filled when not available
+        for i in range(DEFAULT_DIMENSIONALITY):
+            d[f"emb_{i}"] = 0.0
+        return d
 
 
 class ContentFilter:
@@ -222,20 +228,26 @@ class ContentFilter:
     def _calculate_freshness(self, published_at: Optional[str]) -> float:
         """Return a freshness multiplier in [0.1, 1.0].
 
-        Penalises 25% per month after the first month.
+        Daily decay: 6% per day after a 2-day grace period.
+        Two-week-old news scores ~28%, hits the 10% floor by day 17.
         Missing or unparseable dates default to 1.0 (no penalty).
         """
         if not published_at:
             return 1.0
 
-        from src.utils.helpers import parse_published_date, months_ago
+        from src.utils.helpers import parse_published_date
 
         dt = parse_published_date(published_at)
         if dt is None:
             return 1.0
 
-        age = months_ago(dt)
-        return round(min(1.0, max(0.1, 1.0 - (age - 1) * 0.25)), 4)
+        from src.utils.helpers import utc_now
+        from datetime import timezone
+
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        days_old = max(0.0, (utc_now() - dt).total_seconds() / 86400)
+        return round(min(1.0, max(0.1, 1.0 - max(0, days_old - 2) * 0.06)), 4)
 
     # ------------------------------------------------------------------
     # Stage 1: Production-Relevance Scoring

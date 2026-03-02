@@ -144,6 +144,7 @@ class GeneratePostBody(BaseModel):
 class AssetGenerateBody(BaseModel):
     prompt: str
     aspect_ratio: Optional[str] = "1:1"
+    style: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +350,9 @@ def generate_post_image(post_id: int, body: AssetGenerateBody):
     vc = config.vertex_ai
     if not vc.project_id:
         raise HTTPException(400, "Set GCP_PROJECT_ID in .env to enable Vertex AI")
+    prompt = body.prompt
+    if body.style:
+        prompt = f"{prompt}. Render in the visual style of {body.style}."
     try:
         from src.content.asset_generator import AssetGenerator
         gen = AssetGenerator(
@@ -356,7 +360,7 @@ def generate_post_image(post_id: int, body: AssetGenerateBody):
             location=vc.location,
             imagen_model=vc.imagen_model,
         )
-        path = gen.generate_image(body.prompt, aspect_ratio=body.aspect_ratio or "1:1")
+        path = gen.generate_image(prompt, aspect_ratio=body.aspect_ratio or "1:1")
         post_crud.set_asset(post_id, path, "image")
         return {"ok": True, "path": path, "type": "image"}
     except Exception:
@@ -394,8 +398,12 @@ def remove_post_asset(post_id: int):
     return {"ok": True}
 
 
+class AssetPromptBody(BaseModel):
+    style: Optional[str] = None
+
+
 @app.post("/api/posts/{post_id}/generate-asset-prompt")
-def generate_asset_prompt(post_id: int):
+def generate_asset_prompt(post_id: int, body: AssetPromptBody = AssetPromptBody()):
     """Use the fast model (nano) to generate an Imagen/Veo prompt from post content."""
     config: ConfigManager = _get("config")
     post_crud: PostCRUD = _get("post_crud")
@@ -404,13 +412,22 @@ def generate_asset_prompt(post_id: int):
     if not post:
         raise HTTPException(404, "Post not found")
 
+    style_instruction = ""
+    if body.style:
+        style_instruction = (
+            f" The image MUST be rendered in the distinctive visual style of {body.style} — "
+            f"adopt their palette, brushwork, composition, and artistic sensibility. "
+            f"Make the style unmistakable while keeping the content professional."
+        )
+
     try:
         from src.content.generator import create_ai_provider
 
         ai = create_ai_provider(config.ai)
         result = ai.generate_fast(
             "You are a visual prompt engineer. Generate a concise, vivid prompt for an AI image/video generator. "
-            "The image should be professional, suitable for LinkedIn, and visually complement the post content. "
+            "The image should be professional, suitable for LinkedIn, and visually complement the post content."
+            f"{style_instruction} "
             "Output ONLY the prompt, nothing else. Keep it under 80 words.",
             f"Generate a visual prompt for this LinkedIn post:\n\n{post['content'][:1500]}",
         )
@@ -495,6 +512,50 @@ def update_comment_content(comment_id: int, body: ContentUpdate):
     crud: CommentCRUD = _get("comment_crud")
     crud.update_content(comment_id, body.content)
     return {"ok": True}
+
+
+@app.post("/api/comments/reject-all")
+def reject_all_comments():
+    """Reject all draft + approved comments in one call."""
+    crud: CommentCRUD = _get("comment_crud")
+    log_crud: InteractionLogCRUD = _get("log_crud")
+    count = crud.reject_all()
+    log_crud.log("reject_all_comments", details=f"Rejected {count} comments")
+    return {"rejected": count}
+
+
+@app.get("/api/comments/ranked")
+def list_ranked_comments(limit: int = Query(default=50, ge=1, le=500)):
+    """Return draft + approved comments ranked by target post relevance score."""
+    crud: CommentCRUD = _get("comment_crud")
+
+    drafts = crud.list_by_status("draft", limit=limit)
+    approved = crud.list_by_status("approved", limit=limit)
+    comments = drafts + approved
+
+    try:
+        from src.content.content_filter import ContentFilter
+        content_filter = ContentFilter(min_score_threshold=0)
+
+        for c in comments:
+            if c.get("target_post_content"):
+                scored = content_filter.score(
+                    title="",
+                    content=c["target_post_content"],
+                    author=c.get("target_post_author") or "",
+                    published_at=c.get("created_at"),
+                )
+                c["relevance_score"] = scored.final_score
+            else:
+                c["relevance_score"] = 0.0
+
+        comments.sort(key=lambda c: c["relevance_score"], reverse=True)
+    except Exception:
+        logger.exception("Failed to score comments, returning unsorted")
+        for c in comments:
+            c["relevance_score"] = 0.0
+
+    return comments[:limit]
 
 
 @app.post("/api/comments/approve-all")
@@ -712,6 +773,20 @@ def update_thoughts(doc_id: int, body: ThoughtsUpdate):
     return {"ok": True}
 
 
+@app.put("/api/library/{doc_id}/draft")
+def update_draft(doc_id: int, body: dict):
+    """Save edited draft content back to the library document."""
+    crud: ContentLibraryCRUD = _get("content_crud")
+    doc = crud.get(doc_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    content = body.get("content", "")
+    if not content:
+        raise HTTPException(400, "content is required")
+    crud.update_generated_post(doc_id, doc.get("generated_title") or "", content)
+    return {"ok": True}
+
+
 @app.post("/api/library/{doc_id}/generate")
 def generate_post_from_library(doc_id: int):
     config: ConfigManager = _get("config")
@@ -801,6 +876,12 @@ def list_feed_items(
 
     feedback_map = feedback_crud.get_feedback_map()
 
+    # Recalculate freshness against current date so scores decay over time
+    from datetime import timezone
+    from src.utils.helpers import parse_published_date, utc_now
+
+    now = utc_now()
+
     for item in items:
         h = item.get("item_hash", "")
         item["feedback"] = feedback_map.get(h)
@@ -814,6 +895,28 @@ def list_feed_items(
                 item["matched_categories"] = json.loads(item["matched_categories"])
             except (json.JSONDecodeError, TypeError):
                 pass
+
+        # Live freshness: 6% decay per day after 2-day grace period
+        pub = item.get("published_at")
+        dt = parse_published_date(pub) if pub else None
+        if dt is not None:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            days_old = max(0.0, (now - dt).total_seconds() / 86400)
+            freshness = round(min(1.0, max(0.1, 1.0 - max(0, days_old - 2) * 0.06)), 4)
+        else:
+            freshness = 1.0
+        item["freshness_multiplier"] = freshness
+        # Recompute: base scores haven't changed, just apply live freshness
+        base = (
+            (item.get("production_score", 0) or 0) * 0.30
+            + (item.get("executive_score", 0) or 0) * 0.35
+            + (item.get("keyword_score", 0) or 0) * 0.35
+        )
+        item["final_score"] = round(base * freshness, 2)
+
+    # Re-sort by live score
+    items.sort(key=lambda x: x.get("final_score", 0), reverse=True)
 
     return items
 
@@ -858,9 +961,18 @@ def fetch_feeds(
             max_results=max_results,
         )
 
+        # Compute embeddings in batch
+        embeddings: list[list[float]] = []
+        vc = config.vertex_ai
+        if vc.project_id and scored:
+            from src.content.embeddings import get_embeddings, embedding_text
+            texts = [embedding_text(item.title, item.content) for item in scored]
+            embeddings = get_embeddings(texts, project_id=vc.project_id, location="us-central1")
+
         persisted = 0
-        for item in scored:
+        for idx, item in enumerate(scored):
             item_hash = hashlib.sha256(f"{item.title}{item.url}".encode()).hexdigest()[:16]
+            emb = embeddings[idx] if idx < len(embeddings) else None
             feed_crud.upsert(
                 item_hash=item_hash,
                 title=item.title,
@@ -876,6 +988,7 @@ def fetch_feeds(
                 content_type=item.content_type.value,
                 matched_keywords=item.matched_keywords,
                 matched_categories=item.matched_categories,
+                embedding=emb,
             )
             if item.final_score >= config.aggregation.auto_save_threshold:
                 content_crud.add(
@@ -886,7 +999,7 @@ def fetch_feeds(
                 )
             persisted += 1
 
-        return {"fetched": len(scored), "persisted": persisted}
+        return {"fetched": len(scored), "persisted": persisted, "embedded": len(embeddings)}
     except Exception:
         logger.exception("Request failed")
         raise HTTPException(500, "Internal server error")
@@ -929,6 +1042,8 @@ def save_feed_to_library(body: FeedSaveBody):
 
 @app.post("/api/feed/retrain")
 def retrain_reranker():
+    config: ConfigManager = _get("config")
+    feed_crud: FeedItemCRUD = _get("feed_crud")
     feedback_crud: FeedbackCRUD = _get("feedback_crud")
     try:
         from src.content.reranker import FeedReranker
@@ -940,6 +1055,22 @@ def retrain_reranker():
         for h in published_hashes:
             if h not in feedback_map:
                 feedback_map[h] = "liked"
+
+        # Backfill embeddings for training items that don't have them yet
+        vc = config.vertex_ai
+        if vc.project_id:
+            from src.content.embeddings import get_embeddings, embedding_text
+
+            missing = [r for r in training_data if not r.get("embedding")]
+            if missing:
+                texts = [embedding_text(r.get("title", ""), r.get("content", "")) for r in missing]
+                embeddings = get_embeddings(texts, project_id=vc.project_id, location="us-central1")
+                for row, emb in zip(missing, embeddings):
+                    row["embedding"] = json.dumps(emb)
+                    if row.get("id"):
+                        feed_crud.update_embedding(row["id"], emb)
+                logger.info("Backfilled embeddings for %d training items", len(missing))
+
         result = reranker.train(training_data, feedback_map)
         return result
     except Exception:

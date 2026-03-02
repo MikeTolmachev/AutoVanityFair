@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS feed_items (
     matched_keywords TEXT,
     matched_categories TEXT,
     saved_to_library INTEGER DEFAULT 0,
+    embedding TEXT,
     fetched_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -158,6 +159,14 @@ class Database:
         for col, sql in posts_migrations.items():
             if col not in posts_cols:
                 conn.execute(sql)
+
+        # feed_items migrations
+        feed_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(feed_items)").fetchall()
+        }
+        if "embedding" not in feed_cols:
+            conn.execute("ALTER TABLE feed_items ADD COLUMN embedding TEXT")
 
     @contextmanager
     def connect(self) -> Generator[sqlite3.Connection, None, None]:
