@@ -1335,11 +1335,16 @@ async function saveFeedToLibrary(index) {
   const item = (window._feedItems || [])[index];
   if (!item) return;
   try {
+    // Auto-like: saving an article is a positive signal for the reranker
+    if (item.id && item.feedback !== 'liked') {
+      await api(`/feed/${item.id}/feedback`, { method: 'POST', body: { feedback: 'liked' } });
+      item.feedback = 'liked';
+    }
     const result = await api('/feed/save', {
       method: 'POST',
       body: { title: item.title, content: item.content || '', url: item.url, source_name: item.source_name, content_type: item.content_type },
     });
-    toast(`Saved — opening document`, 'success');
+    toast(`Saved & liked — opening document`, 'success');
     openLibraryDoc(result.id);
   } catch (e) {
     toast(`Save failed: ${e.message}`, 'error');
