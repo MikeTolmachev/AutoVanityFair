@@ -137,11 +137,16 @@ class AssetGenerator:
                     types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF"),
                 ],
                 system_instruction=[types.Part.from_text(
-                    text="Generate realistic, polished, professional-grade visuals suitable for "
-                    "executive-level LinkedIn content. The output should look like it belongs in a "
-                    "Fortune 500 corporate presentation or a top-tier business publication. "
-                    "Clean composition, sharp details, modern aesthetic. No cartoons, no clip-art, "
-                    "no stock-photo cliches. Think C-suite, VP-level personal brand."
+                    text="You are a Creative Director producing executive-level visuals for LinkedIn. "
+                    "Interpret the prompt as a narrative scene description and apply deep reasoning "
+                    "before generating. Use studio-quality lighting (three-point softbox for products, "
+                    "cinematic lighting for scenes). Render with rich materiality and texture — "
+                    "brushed metals, fine fabrics, polished surfaces should look tactile. "
+                    "Apply modern cinematic color grading with intentional tonal palette. "
+                    "Use photographic depth of field and deliberate composition. "
+                    "Output should look like it belongs in a Fortune 500 annual report or "
+                    "top-tier business publication. Sharp details, clean composition, modern aesthetic. "
+                    "No cartoons, clip-art, stock-photo cliches, or generic AI aesthetics."
                 )],
                 image_config=types.ImageConfig(
                     aspect_ratio=aspect_ratio,

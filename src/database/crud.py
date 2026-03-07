@@ -388,6 +388,25 @@ class FeedItemCRUD:
                 (item_id,),
             )
 
+    def get(self, item_id: int) -> Optional[dict]:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM feed_items WHERE id = ?", (item_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_all(self) -> list[dict]:
+        with self.db.connect() as conn:
+            rows = conn.execute("SELECT * FROM feed_items").fetchall()
+            return [dict(r) for r in rows]
+
+    def update_final_score(self, item_id: int, final_score: float) -> None:
+        with self.db.connect() as conn:
+            conn.execute(
+                "UPDATE feed_items SET final_score = ? WHERE id = ?",
+                (final_score, item_id),
+            )
+
     def count(self) -> int:
         with self.db.connect() as conn:
             row = conn.execute("SELECT COUNT(*) as cnt FROM feed_items").fetchone()

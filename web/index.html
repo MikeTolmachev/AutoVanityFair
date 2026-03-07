@@ -1255,7 +1255,7 @@ function renderFeedItems(items) {
           <button class="btn btn-sm ${fb === 'disliked' ? 'btn-danger' : 'btn-secondary'}" onclick="feedFeedback(${item.id},'disliked',this)">
             ${fb === 'disliked' ? 'Disliked' : 'Dislike'}
           </button>
-          <button class="btn btn-sm btn-secondary" onclick="saveFeedToLibrary(${i})">Save & Open</button>
+          <button class="btn btn-sm btn-secondary" onclick="saveFeedToLibrary(${item.id})">Save & Open</button>
           ${item.url ? `<a href="${escapeHtml(safeUrl(item.url))}" target="_blank" rel="noopener" style="font-size:0.76rem;margin-left:auto">Open article</a>` : ''}
         </div>
       </div>
@@ -1331,19 +1331,16 @@ async function feedFeedback(itemId, feedback, btn) {
   }
 }
 
-async function saveFeedToLibrary(index) {
-  const item = (window._feedItems || [])[index];
-  if (!item) return;
+async function saveFeedToLibrary(itemId) {
   try {
     // Auto-like: saving an article is a positive signal for the reranker
-    if (item.id && item.feedback !== 'liked') {
-      await api(`/feed/${item.id}/feedback`, { method: 'POST', body: { feedback: 'liked' } });
+    const item = (window._feedItems || []).find(i => i.id === itemId);
+    if (item && item.feedback !== 'liked') {
+      await api(`/feed/${itemId}/feedback`, { method: 'POST', body: { feedback: 'liked' } });
       item.feedback = 'liked';
     }
-    const result = await api('/feed/save', {
-      method: 'POST',
-      body: { title: item.title, content: item.content || '', url: item.url, source_name: item.source_name, content_type: item.content_type },
-    });
+    // Server looks up feed item by ID — no client-side data needed
+    const result = await api(`/feed/${itemId}/save`, { method: 'POST' });
     toast(`Saved & liked — opening document`, 'success');
     openLibraryDoc(result.id);
   } catch (e) {
@@ -1356,7 +1353,10 @@ async function retrainModel() {
   try {
     const result = await api('/feed/retrain', { method: 'POST' });
     if (result.status === 'trained') {
-      toast(`Model trained on ${result.total_samples} samples`, 'success');
+      const cv = result.cross_validation || {};
+      const cvInfo = cv.f1 != null ? ` · CV F1=${cv.f1} Acc=${cv.accuracy}` : '';
+      toast(`Trained on ${result.total_samples} samples, rescored ${result.rescored || 0}${cvInfo}`, 'success');
+      navigate('feeds');
     } else if (result.status === 'insufficient_data') {
       toast(`Need more feedback (have ${result.samples}, need ${result.min_required})`, 'info');
     } else {

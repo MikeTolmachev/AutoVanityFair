@@ -425,10 +425,22 @@ def generate_asset_prompt(post_id: int, body: AssetPromptBody = AssetPromptBody(
 
         ai = create_ai_provider(config.ai)
         result = ai.generate_fast(
-            "You are a visual prompt engineer. Generate a concise, vivid prompt for an AI image/video generator. "
-            "The image should be professional, suitable for LinkedIn, and visually complement the post content."
+            "You are a visual prompt engineer for Nano Banana / Gemini image models. "
+            "Generate a narrative scene description — NOT a keyword list. "
+            "Start with a strong verb (Generate, Create, Photograph, Render). "
+            "Follow this formula: [Subject] + [Action/Pose] + [Location/Context] + [Composition] + [Style/Lighting]. "
+            "Use positive framing — describe what IS in the scene, never what isn't (e.g. 'empty street' not 'no cars'). "
+            "Control the camera: specify camera type (e.g. Fujifilm for authentic color science), "
+            "lens, angle, depth of field (e.g. 'low-angle shot, shallow depth of field f/1.8, wide-angle lens'). "
+            "Design the lighting explicitly (e.g. 'three-point softbox setup', 'golden hour backlighting', "
+            "'chiaroscuro lighting with harsh high contrast'). "
+            "Define color grading and film stock (e.g. 'cinematic muted teal tones', 'shot on medium-format analog film, pronounced grain'). "
+            "Emphasize materiality and texture of objects (e.g. 'brushed aluminum', 'navy blue tweed', 'minimalist ceramic'). "
+            "If text appears in the image, enclose exact words in quotes and specify font style. "
+            "The result must look like a Fortune 500 corporate presentation or top-tier business publication. "
+            "Clean, modern, executive-level aesthetic. No cartoons, clip-art, or stock-photo cliches."
             f"{style_instruction} "
-            "Output ONLY the prompt, nothing else. Keep it under 80 words.",
+            "Output ONLY the prompt, nothing else. Keep it under 120 words.",
             f"Generate a visual prompt for this LinkedIn post:\n\n{post['content'][:1500]}",
         )
         return {"prompt": result.content, "model": result.model}
@@ -1035,6 +1047,23 @@ def save_feed_to_library(body: FeedSaveBody):
     return {"id": doc_id}
 
 
+@app.post("/api/feed/{item_id}/save")
+def save_feed_item_to_library(item_id: int):
+    """Save a feed item to the content library by its DB id."""
+    feed_crud: FeedItemCRUD = _get("feed_crud")
+    content_crud: ContentLibraryCRUD = _get("content_crud")
+    item = feed_crud.get(item_id)
+    if not item:
+        raise HTTPException(404, "Feed item not found")
+    doc_id = content_crud.add(
+        title=item["title"],
+        content=item.get("content", ""),
+        source=item.get("url") or item.get("source_name", ""),
+        tags=[item.get("content_type", ""), item.get("source_name", "")],
+    )
+    return {"id": doc_id}
+
+
 # ---------------------------------------------------------------------------
 # Reranker
 # ---------------------------------------------------------------------------
@@ -1072,6 +1101,16 @@ def retrain_reranker():
                 logger.info("Backfilled embeddings for %d training items", len(missing))
 
         result = reranker.train(training_data, feedback_map)
+
+        # Rescore all feed items with the newly trained model
+        if result.get("status") == "trained":
+            all_items = feed_crud.get_all()
+            scored = reranker.rescore_db_rows(all_items)
+            for item_id, new_score in scored:
+                feed_crud.update_final_score(item_id, new_score)
+            result["rescored"] = len(scored)
+            logger.info("Rescored %d feed items with new model", len(scored))
+
         return result
     except Exception:
         logger.exception("Request failed")
