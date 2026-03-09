@@ -76,6 +76,8 @@
 ## Feed Sources
 - Defined in `src/content/rss_aggregator.py` as `PRIORITY_1_FEEDS` through `PRIORITY_4_FEEDS`
 - Google AI Blog is P1 (max weight)
+- Hourly background fetcher runs as a daemon thread in the FastAPI lifespan (no APScheduler needed)
+- Shared logic in `_do_feed_fetch()` used by both background job and `POST /api/feed/fetch`
 
 ## CatBoost Reranker
 - Model at `data/reranker_model.cbm`, stats at `.cbm.stats.json`
