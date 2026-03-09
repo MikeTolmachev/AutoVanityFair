@@ -981,7 +981,8 @@ def list_feed_items(
     if source:
         items = feed_crud.get_by_source(source, limit=limit)
     else:
-        items = feed_crud.get_top_scored(limit=limit, min_score=min_score)
+        # Fetch a larger pool so freshness decay can resurface newer items
+        items = feed_crud.get_top_scored(limit=limit * 5, min_score=0)
 
     feedback_map = feedback_crud.get_feedback_map()
 
@@ -1016,16 +1017,14 @@ def list_feed_items(
         else:
             freshness = 1.0
         item["freshness_multiplier"] = freshness
-        # Recompute: base scores haven't changed, just apply live freshness
-        base = (
-            (item.get("production_score", 0) or 0) * 0.30
-            + (item.get("executive_score", 0) or 0) * 0.35
-            + (item.get("keyword_score", 0) or 0) * 0.35
-        )
-        item["final_score"] = round(base * freshness, 2)
+        # Apply freshness decay to the stored final_score (may be ML-based or rule-based)
+        item["final_score"] = round((item.get("final_score", 0) or 0) * freshness, 2)
 
-    # Re-sort by live score
+    # Re-sort by live score, then apply limit and min_score filter
     items.sort(key=lambda x: x.get("final_score", 0), reverse=True)
+    if min_score > 0:
+        items = [i for i in items if i.get("final_score", 0) >= min_score]
+    items = items[:limit]
 
     return items
 
