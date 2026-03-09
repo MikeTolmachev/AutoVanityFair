@@ -38,6 +38,14 @@
 - Generated assets saved to `data/assets/`, served at `/assets/` by FastAPI
 - Images converted from PNG to JPEG (quality 95) via Pillow for smaller files + LinkedIn compatibility
 - Art style dropdown sends style to prompt generator; Gemini blends it into the image prompt
+- Nano Banana prompting (per Google's guide): narrative scene descriptions, NOT keyword lists
+  - Formula: [Subject] + [Action/Pose] + [Location/Context] + [Composition] + [Style/Lighting]
+  - Start with strong verb; use positive framing ("empty street" not "no cars")
+  - Specify camera hardware (Fujifilm, GoPro), lens, angle, depth of field
+  - Explicit lighting (three-point softbox, chiaroscuro, golden hour backlighting)
+  - Color grading / film stock (cinematic muted teal, medium-format analog film)
+  - Materiality and texture (brushed aluminum, navy blue tweed, minimalist ceramic)
+  - Text in images: enclose exact words in quotes, specify font style
 - Embeddings: `text-embedding-004` at `us-central1` with `output_dimensionality=32`, batch supported
 
 ## Auth & Security
@@ -74,7 +82,16 @@
 - Features: 11 numeric + 32 embedding dims + 2 categorical (content_type, source)
 - Embeddings stored as JSON in `feed_items.embedding` column
 - Train via `POST /api/feed/retrain` -- auto-backfills missing embeddings
+- Training runs 5-fold CV (accuracy, precision, recall, F1), then trains final model on all data
+- After training, all feed items are rescored with the new model and the feed view refreshes
 - Freshness: 6%/day decay after 2-day grace period, floor at 10%
+- Save & Open uses server-side lookup (`POST /feed/{id}/save`) -- never pass article data from client
+
+## Firecrawl
+- CLI tool for web scraping/search: `firecrawl scrape|search|map|crawl`
+- Auth: `firecrawl login --browser`, credentials stored locally
+- Cache dir: `.firecrawl/` (gitignored), use `-o .firecrawl/filename.md` for output
+- Prefer firecrawl over WebFetch/WebSearch for web content extraction
 
 ## Code Style
 - Type hints on function signatures
