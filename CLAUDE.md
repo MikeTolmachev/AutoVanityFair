@@ -87,6 +87,8 @@
 - Training runs 5-fold CV (accuracy, precision, recall, F1), then trains final model on all data
 - After training, all feed items are rescored with the new model and the feed view refreshes
 - Freshness: 6%/day decay after 2-day grace period, floor at 10%
+- GET `/api/feed` applies freshness to stored `final_score` (works for both ML and rule-based)
+- Fetches 5x requested limit from DB, applies freshness decay, then trims -- ensures fresh items surface
 - Save & Open uses server-side lookup (`POST /feed/{id}/save`) -- never pass article data from client
 
 ## Firecrawl
