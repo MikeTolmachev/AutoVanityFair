@@ -56,8 +56,91 @@ def _get(key: str):
     return _state[key]
 
 
+def _do_feed_fetch(
+    config: ConfigManager,
+    feed_crud: FeedItemCRUD,
+    content_crud: ContentLibraryCRUD,
+    min_score: float = 10.0,
+    max_results: int = 200,
+    priorities: Optional[list[int]] = None,
+) -> dict:
+    """Shared feed fetch logic used by both the API endpoint and the background job."""
+    from src.content.rss_aggregator import RSSAggregator
+    from src.content.content_filter import ContentFilter
+
+    content_filter = ContentFilter(min_score_threshold=min_score)
+    aggregator = RSSAggregator(
+        content_filter=content_filter,
+        fetch_timeout=config.aggregation.fetch_timeout,
+        max_items_per_feed=config.aggregation.max_items_per_feed,
+    )
+
+    scored = aggregator.fetch_and_filter(
+        priorities=priorities,
+        max_results=max_results,
+    )
+
+    # Compute embeddings in batch
+    embeddings: list[list[float]] = []
+    vc = config.vertex_ai
+    if vc.project_id and scored:
+        from src.content.embeddings import get_embeddings, embedding_text
+        texts = [embedding_text(item.title, item.content) for item in scored]
+        embeddings = get_embeddings(texts, project_id=vc.project_id, location="us-central1")
+
+    persisted = 0
+    for idx, item in enumerate(scored):
+        item_hash = hashlib.sha256(f"{item.title}{item.url}".encode()).hexdigest()[:16]
+        emb = embeddings[idx] if idx < len(embeddings) else None
+        feed_crud.upsert(
+            item_hash=item_hash,
+            title=item.title,
+            content=item.content,
+            url=item.url,
+            source_name=item.source,
+            author=item.author,
+            published_at=item.published_at,
+            production_score=item.production_score,
+            executive_score=item.executive_score,
+            keyword_score=item.keyword_score,
+            final_score=item.final_score,
+            content_type=item.content_type.value,
+            matched_keywords=item.matched_keywords,
+            matched_categories=item.matched_categories,
+            embedding=emb,
+        )
+        if item.final_score >= config.aggregation.auto_save_threshold:
+            content_crud.add(
+                title=item.title,
+                content=item.content,
+                source=item.url or item.source,
+                tags=[item.content_type.value],
+            )
+        persisted += 1
+
+    return {"fetched": len(scored), "persisted": persisted, "embedded": len(embeddings)}
+
+
+def _background_feed_loop(stop_event):
+    """Hourly feed fetch loop running in a background thread."""
+    interval = 3600  # 1 hour
+    logger.info("Background feed fetcher started (interval=%ds)", interval)
+    while not stop_event.wait(interval):
+        try:
+            result = _do_feed_fetch(
+                config=_get("config"),
+                feed_crud=_get("feed_crud"),
+                content_crud=_get("content_crud"),
+            )
+            logger.info("Background feed fetch: %s", result)
+        except Exception:
+            logger.exception("Background feed fetch failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import threading
+
     config = ConfigManager()
     db = Database(config.paths.database)
     safety = SafetyMonitor(
@@ -81,7 +164,21 @@ async def lifespan(app: FastAPI):
         feedback_crud=FeedbackCRUD(db),
         search_feedback_crud=SearchFeedbackCRUD(db),
     )
+
+    # Start hourly background feed fetcher
+    stop_event = threading.Event()
+    feed_thread = threading.Thread(
+        target=_background_feed_loop,
+        args=(stop_event,),
+        daemon=True,
+        name="feed-fetcher",
+    )
+    feed_thread.start()
+
     yield
+
+    stop_event.set()
+    feed_thread.join(timeout=5)
     _state.clear()
 
 
@@ -946,72 +1043,22 @@ def fetch_feeds(
     priorities: Optional[str] = None,
 ):
     """Fetch RSS feeds, score, and persist. priorities is comma-separated like '1,2'."""
-    config: ConfigManager = _get("config")
-    feed_crud: FeedItemCRUD = _get("feed_crud")
-    content_crud: ContentLibraryCRUD = _get("content_crud")
+    prio_list = None
+    if priorities:
+        try:
+            prio_list = [int(p.strip()) for p in priorities.split(",")]
+        except ValueError:
+            raise HTTPException(400, "priorities must be comma-separated integers (e.g. '1,2')")
 
     try:
-        from src.content.rss_aggregator import RSSAggregator
-        from src.content.content_filter import ContentFilter
-
-        content_filter = ContentFilter(min_score_threshold=min_score)
-        aggregator = RSSAggregator(
-            content_filter=content_filter,
-            fetch_timeout=config.aggregation.fetch_timeout,
-            max_items_per_feed=config.aggregation.max_items_per_feed,
-        )
-
-        prio_list = None
-        if priorities:
-            try:
-                prio_list = [int(p.strip()) for p in priorities.split(",")]
-            except ValueError:
-                raise HTTPException(400, "priorities must be comma-separated integers (e.g. '1,2')")
-
-        scored = aggregator.fetch_and_filter(
-            priorities=prio_list,
+        return _do_feed_fetch(
+            config=_get("config"),
+            feed_crud=_get("feed_crud"),
+            content_crud=_get("content_crud"),
+            min_score=min_score,
             max_results=max_results,
+            priorities=prio_list,
         )
-
-        # Compute embeddings in batch
-        embeddings: list[list[float]] = []
-        vc = config.vertex_ai
-        if vc.project_id and scored:
-            from src.content.embeddings import get_embeddings, embedding_text
-            texts = [embedding_text(item.title, item.content) for item in scored]
-            embeddings = get_embeddings(texts, project_id=vc.project_id, location="us-central1")
-
-        persisted = 0
-        for idx, item in enumerate(scored):
-            item_hash = hashlib.sha256(f"{item.title}{item.url}".encode()).hexdigest()[:16]
-            emb = embeddings[idx] if idx < len(embeddings) else None
-            feed_crud.upsert(
-                item_hash=item_hash,
-                title=item.title,
-                content=item.content,
-                url=item.url,
-                source_name=item.source,
-                author=item.author,
-                published_at=item.published_at,
-                production_score=item.production_score,
-                executive_score=item.executive_score,
-                keyword_score=item.keyword_score,
-                final_score=item.final_score,
-                content_type=item.content_type.value,
-                matched_keywords=item.matched_keywords,
-                matched_categories=item.matched_categories,
-                embedding=emb,
-            )
-            if item.final_score >= config.aggregation.auto_save_threshold:
-                content_crud.add(
-                    title=item.title,
-                    content=item.content,
-                    source=item.url or item.source,
-                    tags=[item.content_type.value],
-                )
-            persisted += 1
-
-        return {"fetched": len(scored), "persisted": persisted, "embedded": len(embeddings)}
     except Exception:
         logger.exception("Request failed")
         raise HTTPException(500, "Internal server error")
