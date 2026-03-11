@@ -403,11 +403,17 @@ class LinkedInBot:
             try:
                 href = await link.get_attribute("href")
                 if href and "urn:li:activity:" in href:
-                    if href.startswith("/"):
-                        href = f"https://www.linkedin.com{href}"
                     # Clean up tracking params
                     if "?" in href:
                         href = href.split("?")[0]
+                    # Extract activity URN and build canonical feed URL
+                    # Links may be analytics URLs (/analytics/post-summary/urn:...)
+                    # which have no comment box — always normalize to /feed/update/
+                    urn_match = re.search(r"(urn:li:activity:\d+)", href)
+                    if urn_match:
+                        href = f"https://www.linkedin.com/feed/update/{urn_match.group(1)}/"
+                    elif href.startswith("/"):
+                        href = f"https://www.linkedin.com{href}"
                     logger.info("Found own latest post: %s", href)
                     return href
             except Exception:

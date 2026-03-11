@@ -1754,6 +1754,10 @@ function renderPostCard(post, i) {
     actions = `<button class="btn btn-sm btn-secondary" onclick="updatePostStatus(${post.id},'draft')">Move to Draft</button>`;
   }
 
+  const sourceLink = post.source_url
+    ? `<a href="${escapeHtml(safeUrl(post.source_url))}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary">Source Article &#8599;</a>`
+    : '';
+
   return `
     <div class="content-card" style="animation-delay:${Math.min(i * 0.03, 0.3)}s">
       <div class="content-card-header">
@@ -1767,6 +1771,7 @@ function renderPostCard(post, i) {
       ${assetSection}
       <div class="content-card-footer">
         ${actions}
+        ${sourceLink}
         <span class="char-count">${(post.content || '').length} chars</span>
       </div>
     </div>

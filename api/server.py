@@ -302,13 +302,23 @@ def get_stats():
 @app.get("/api/posts")
 def list_posts(status: str = "draft", limit: int = Query(default=50, ge=1, le=500)):
     crud: PostCRUD = _get("post_crud")
+    content_crud: ContentLibraryCRUD = _get("content_crud")
     posts = crud.list_by_status(status, limit=limit)
-    # Parse rag_sources JSON strings
+    # Parse rag_sources JSON strings and resolve source URLs
     for p in posts:
         if p.get("rag_sources") and isinstance(p["rag_sources"], str):
             try:
                 p["rag_sources"] = json.loads(p["rag_sources"])
             except (json.JSONDecodeError, TypeError):
+                pass
+        # Resolve source article URL from rag_sources
+        p["source_url"] = None
+        if p.get("rag_sources") and isinstance(p["rag_sources"], list) and p["rag_sources"]:
+            try:
+                doc = content_crud.get(int(p["rag_sources"][0]))
+                if doc and doc.get("source"):
+                    p["source_url"] = doc["source"]
+            except (ValueError, TypeError):
                 pass
     return posts
 
@@ -412,12 +422,13 @@ async def publish_post(post_id: int):
                 post_url = await bot.get_my_latest_post_url()
                 if source_url:
                     comment_text = f"Source article: {source_url}"
+                    await session.wait(5)
                     if post_url:
-                        await session.wait(2)
-                        await bot.publish_comment(post_url, comment_text)
+                        commented = await bot.publish_comment(post_url, comment_text)
                     else:
-                        await session.wait(2)
-                        await bot.comment_on_own_latest_post(comment_text)
+                        commented = await bot.comment_on_own_latest_post(comment_text)
+                    if not commented:
+                        logger.warning("Failed to post source comment for post #%s", post_id)
                 return True, post_url
 
         success, post_url = await asyncio.to_thread(asyncio.run, _do())
