@@ -416,7 +416,10 @@ async def publish_post(post_id: int):
                 asset = post.get("asset_path") or ""
                 if asset and not os.path.exists(asset):
                     asset = ""
-                published = await bot.publish_post(post["content"], asset_path=asset)
+                post_content = post["content"]
+                if source_url:
+                    post_content += f"\n\n{source_url}"
+                published = await bot.publish_post(post_content, asset_path=asset)
                 if not published:
                     return False, None
                 post_url = await bot.get_my_latest_post_url()
