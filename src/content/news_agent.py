@@ -79,7 +79,7 @@ def extract_topics(db: Database, config, n: int = 5) -> list[str]:
 
     try:
         ai = create_ai_provider(config.ai)
-        result = ai.generate_fast(
+        result = ai.generate(
             system_prompt="You extract search topics. Return ONLY a JSON array of strings.",
             user_prompt=prompt,
         )

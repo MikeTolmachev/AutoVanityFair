@@ -953,32 +953,47 @@ def feed_source_counts():
     return feed_crud.count_by_source()
 
 
-@app.post("/api/feed/research")
-def research_news(
+@app.post("/api/feed/topics")
+def extract_research_topics(
     max_topics: int = Query(default=5, ge=1, le=10),
 ):
-    """Run agentic news research across multiple platforms."""
-    import threading
-
-    from src.content.news_agent import extract_topics, run_research
+    """Extract search topics from published posts and liked items."""
+    from src.content.news_agent import extract_topics
 
     config = _get("config")
     db = _get("db")
 
     try:
         topics = extract_topics(db, config, n=max_topics)
+        return {"topics": topics}
     except Exception:
         logger.exception("Topic extraction failed")
         raise HTTPException(500, "Internal server error")
 
-    # Run research in a background thread to avoid blocking the event loop
+
+class ResearchRequest(BaseModel):
+    topics: list[str]
+
+
+@app.post("/api/feed/research")
+def research_news(body: ResearchRequest):
+    """Run agentic news research for the given topics."""
+    import threading
+
+    from src.content.news_agent import run_research
+
+    if not body.topics:
+        raise HTTPException(400, "topics list cannot be empty")
+
+    config = _get("config")
+
     result_holder: list[dict] = []
     error_holder: list[Exception] = []
 
     def _run():
         try:
             result = run_research(
-                topics=topics,
+                topics=body.topics,
                 config=config,
                 feed_crud=_get("feed_crud"),
                 content_crud=_get("content_crud"),
