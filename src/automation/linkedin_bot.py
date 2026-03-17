@@ -57,7 +57,7 @@ def search_linkedin_via_google(query: str, max_results: int = 20) -> list[Linked
     """
     import xml.etree.ElementTree as ET
     from urllib.parse import quote
-    from src.content.rss_aggregator import _fetch_url, _strip_html
+    from src.utils.helpers import fetch_url as _fetch_url, strip_html as _strip_html
 
     search_query = f"site:linkedin.com/posts {query}"
     url = f"https://news.google.com/rss/search?q={quote(search_query)}&hl=en-US&gl=US&ceid=US:en"

@@ -73,11 +73,15 @@
   - `test_priority_2_feeds` / `test_get_feeds_by_priority` -- feed count mismatch
 - Skip with: `--deselect tests/test_config_manager.py::test_app_config_defaults` etc.
 
-## Feed Sources
-- Defined in `src/content/rss_aggregator.py` as `PRIORITY_1_FEEDS` through `PRIORITY_4_FEEDS`
-- Google AI Blog is P1 (max weight)
-- Hourly background fetcher runs as a daemon thread in the FastAPI lifespan (no APScheduler needed)
-- Shared logic in `_do_feed_fetch()` used by both background job and `POST /api/feed/fetch`
+## News Research Agent
+- `src/content/news_agent.py` — agentic multi-platform search via `last30days` plugin
+- Topics auto-derived from published posts + liked feed items via `extract_topics()`
+- Falls back to `HIGH_PRIORITY_KEYWORDS` when no history exists
+- Searches Reddit, X, YouTube, HN, TikTok, Bluesky, Instagram, Web, Polymarket
+- `POST /api/feed/research` endpoint (replaces old `/api/feed/fetch`)
+- CLI: `python main.py fetch-feeds --max-topics 5`
+- Results scored through `ContentFilter.score()`, embedded, and upserted to `feed_items`
+- last30days script at `~/.claude/plugins/marketplaces/last30days-skill/scripts/last30days.py`
 
 ## CatBoost Reranker
 - Model at `data/reranker_model.cbm`, stats at `.cbm.stats.json`

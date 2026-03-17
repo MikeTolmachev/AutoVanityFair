@@ -97,14 +97,9 @@ class VertexAIConfig(BaseModel):
 
 class AggregationConfig(BaseModel):
     enabled: bool = True
-    fetch_timeout: int = 15
-    max_items_per_feed: int = 20
-    cache_ttl_minutes: int = 30
-    min_relevance_score: float = 10.0
-    default_priorities: list[int] = [1, 2]
-    schedule_interval_hours: int = 6
     auto_save_threshold: float = 35.0
-    max_age_months: int = 3
+    max_topics: int = 5
+    research_timeout: int = 300
 
 
 class AppConfig(BaseModel):

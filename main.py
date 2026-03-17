@@ -195,69 +195,37 @@ def cmd_generate_post(args):
 
 
 def cmd_fetch_feeds(args):
-    """Fetch and score content from RSS/API feeds."""
+    """Research news across multiple platforms using the last30days agent."""
     from src.core.config_manager import ConfigManager
     from src.database.models import Database
     from src.database.crud import FeedItemCRUD, ContentLibraryCRUD
-    from src.content.rss_aggregator import RSSAggregator
-    from src.content.content_filter import ContentFilter
+    from src.content.news_agent import extract_topics, run_research
 
     config = ConfigManager()
     db = Database(config.paths.database)
     feed_crud = FeedItemCRUD(db)
     content_crud = ContentLibraryCRUD(db)
 
-    content_filter = ContentFilter(
-        min_score_threshold=args.min_score or config.aggregation.min_relevance_score,
-    )
-    aggregator = RSSAggregator(
-        content_filter=content_filter,
-        fetch_timeout=config.aggregation.fetch_timeout,
-        max_items_per_feed=config.aggregation.max_items_per_feed,
-    )
+    max_topics = args.max_topics if hasattr(args, "max_topics") else 5
 
-    priorities = [int(p) for p in args.priorities.split(",")] if args.priorities else config.aggregation.default_priorities
+    print("Extracting topics from your history...")
+    topics = extract_topics(db, config, n=max_topics)
+    print(f"Topics: {topics}\n")
 
-    print(f"Fetching feeds (priorities: {priorities})...")
-    scored = aggregator.fetch_and_filter(
-        priorities=priorities,
-        max_results=args.max_results,
+    print("Researching across platforms (this may take a few minutes)...")
+    result = run_research(
+        topics=topics,
+        config=config,
+        feed_crud=feed_crud,
+        content_crud=content_crud,
     )
 
-    print(f"\nTop {len(scored)} results:\n")
-    for i, item in enumerate(scored, 1):
-        print(f"  {i:2d}. [{item.final_score:5.1f}] {item.title[:70]}")
-        print(f"      Source: {item.source} | Type: {item.content_type.value}")
-
-        # Persist to DB
-        import hashlib
-        item_hash = hashlib.sha256(f"{item.title}{item.url}".encode()).hexdigest()[:16]
-        feed_crud.upsert(
-            item_hash=item_hash,
-            title=item.title,
-            content=item.content,
-            url=item.url,
-            source_name=item.source,
-            production_score=item.production_score,
-            executive_score=item.executive_score,
-            keyword_score=item.keyword_score,
-            final_score=item.final_score,
-            content_type=item.content_type.value,
-            matched_keywords=item.matched_keywords,
-            matched_categories=item.matched_categories,
-        )
-
-        # Auto-save high-scoring items to content library
-        if item.final_score >= config.aggregation.auto_save_threshold:
-            content_crud.add(
-                title=item.title,
-                content=item.content,
-                source=item.url or item.source,
-                tags=[item.content_type.value],
-            )
-            print(f"      >> Auto-saved to content library (score >= {config.aggregation.auto_save_threshold})")
-
-    print(f"\n{len(scored)} items scored and persisted.")
+    print("\nResearch complete:")
+    print(f"  Topics searched: {result['topics_searched']}")
+    print(f"  Items found: {result['items_found']}")
+    print(f"  Unique items: {result['items_unique']}")
+    print(f"  Items persisted: {result['items_persisted']}")
+    print(f"  Items embedded: {result['items_embedded']}")
 
 
 def main():
@@ -281,23 +249,12 @@ def main():
         default="thought_leadership",
     )
 
-    feed_parser = subparsers.add_parser("fetch-feeds", help="Fetch and score RSS/API feeds")
+    feed_parser = subparsers.add_parser("fetch-feeds", help="Research news across multiple platforms")
     feed_parser.add_argument(
-        "--priorities",
-        default=None,
-        help="Comma-separated priorities (e.g., 1,2). Default: from config",
-    )
-    feed_parser.add_argument(
-        "--max-results",
+        "--max-topics",
         type=int,
-        default=20,
-        help="Maximum results to return",
-    )
-    feed_parser.add_argument(
-        "--min-score",
-        type=float,
-        default=None,
-        help="Minimum relevance score threshold",
+        default=5,
+        help="Maximum number of topics to research (1-10)",
     )
 
     args = parser.parse_args()

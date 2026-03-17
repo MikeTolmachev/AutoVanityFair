@@ -1,14 +1,13 @@
 """
 Feed Aggregator UI page.
 
-View and manage RSS/API feeds, browse aggregated content with relevance scores,
+Browse aggregated content with relevance scores,
 provide like/dislike feedback, and train an ML reranker to personalise results.
 """
 
 import streamlit as st
 
-from src.content.rss_aggregator import RSSAggregator, ALL_FEEDS, FeedSource
-from src.content.content_filter import ContentFilter, ContentType
+from src.content.content_filter import ContentType
 from src.content.reranker import FeedReranker
 from src.database.crud import ContentLibraryCRUD, FeedItemCRUD, FeedbackCRUD
 from src.utils.helpers import parse_published_date, months_ago
@@ -20,14 +19,9 @@ def render_feed_aggregator(
     feedback_crud: FeedbackCRUD,
     vector_store=None,
 ):
-    """Page: RSS/API feed aggregation and content filtering."""
+    """Page: Feed aggregation and content filtering."""
     st.header("Feed Aggregator")
-    st.caption("Aggregate production-focused AI content from RSS feeds and APIs")
-
-    # Initialize aggregator and reranker in session state
-    if "aggregator" not in st.session_state:
-        st.session_state.aggregator = RSSAggregator()
-    aggregator: RSSAggregator = st.session_state.aggregator
+    st.caption("Browse and rate aggregated AI content (use the web UI or CLI to research new content)")
 
     if "reranker" not in st.session_state:
         st.session_state.reranker = FeedReranker()
@@ -37,45 +31,14 @@ def render_feed_aggregator(
     if "feedback_map" not in st.session_state:
         st.session_state.feedback_map = feedback_crud.get_feedback_map()
 
-    # --- Feed Sources Overview ---
-    with st.expander("Feed Sources", expanded=False):
-        _render_feed_sources(aggregator)
-
     # --- ML Model Info ---
     with st.expander("ML Reranker", expanded=False):
         _render_reranker_panel(reranker, feedback_crud)
 
     st.divider()
 
-    # --- Fetch Controls ---
-    col_fetch, col_filter, col_max, col_liked = st.columns([2, 2, 1, 1])
-
-    with col_fetch:
-        priority_options = {
-            "All Priorities": None,
-            "P1: Production AI & MLOps": [1],
-            "P2: Engineering Research": [2],
-            "P3: Infrastructure & Deployment": [3],
-            "P4: Community & Discussion": [4],
-            "P1 + P2 (Recommended)": [1, 2],
-        }
-        selected_priority = st.selectbox(
-            "Feed Priority",
-            list(priority_options.keys()),
-            index=5,
-            key="feed_priority_select",
-        )
-        priorities = priority_options[selected_priority]
-
-    with col_filter:
-        min_score = st.slider(
-            "Min Relevance Score",
-            min_value=0.0,
-            max_value=50.0,
-            value=10.0,
-            step=2.5,
-            key="feed_min_score",
-        )
+    # --- View Controls ---
+    col_max, col_liked = st.columns([1, 1])
 
     with col_max:
         max_results = st.number_input(
@@ -89,47 +52,6 @@ def render_feed_aggregator(
 
     with col_liked:
         tagged_only = st.toggle("Tagged Only", value=False, key="feed_tagged_only")
-
-    if st.button("Fetch & Score Content", type="primary", use_container_width=True):
-        aggregator.content_filter.min_score_threshold = min_score
-        with st.status("Fetching feeds...", expanded=True) as status:
-            st.write("Fetching RSS feeds and APIs...")
-            scored_items = aggregator.fetch_and_filter(
-                priorities=priorities,
-                max_results=max_results,
-            )
-
-            # Persist to DB for training data
-            for item in scored_items:
-                feed_crud.upsert(
-                    item_hash=_item_hash(item),
-                    title=item.title,
-                    content=item.content,
-                    url=item.url,
-                    source_name=item.source,
-                    source_category=_guess_category(item.source),
-                    author=item.author,
-                    published_at=item.published_at,
-                    production_score=item.production_score,
-                    executive_score=item.executive_score,
-                    keyword_score=item.keyword_score,
-                    final_score=item.final_score,
-                    content_type=item.content_type.value,
-                    matched_keywords=item.matched_keywords,
-                    matched_categories=item.matched_categories,
-                )
-
-            # ML rerank if model is available
-            if reranker.is_trained:
-                st.write("Reranking with ML model...")
-                scored_items = reranker.rerank(scored_items)
-
-            st.session_state.scored_feed_items = scored_items
-            status.update(
-                label=f"Fetched and scored {len(scored_items)} items"
-                + (" (ML reranked)" if reranker.is_trained else ""),
-                state="complete",
-            )
 
     st.divider()
 
@@ -194,25 +116,6 @@ def render_feed_aggregator(
     # Content cards
     for i, item in enumerate(scored_items):
         _render_scored_item(item, i, content_crud, feed_crud, feedback_crud, vector_store)
-
-
-def _render_feed_sources(aggregator: RSSAggregator):
-    """Render the feed sources table."""
-    stats = aggregator.get_source_stats()
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total Feeds", stats["total_feeds"])
-    with col2:
-        st.metric("Enabled", stats["enabled_feeds"])
-    with col3:
-        st.metric("Cached", stats["cached_feeds"])
-
-    for priority in [1, 2, 3, 4]:
-        feeds = aggregator.get_feeds_by_priority(priority)
-        if feeds:
-            st.caption(f"**Priority {priority}** ({len(feeds)} feeds)")
-            for feed in feeds:
-                st.text(f"  {'[ON]' if feed.enabled else '[OFF]'} {feed.name} -- {feed.category}")
 
 
 def _render_reranker_panel(reranker: FeedReranker, feedback_crud: FeedbackCRUD):
@@ -482,11 +385,3 @@ def _item_hash(item) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
-def _guess_category(source_name: str) -> str:
-    """Guess category from source name (for DB storage)."""
-    from src.content.rss_aggregator import ALL_FEEDS
-
-    for feed in ALL_FEEDS:
-        if feed.name == source_name:
-            return feed.category
-    return ""

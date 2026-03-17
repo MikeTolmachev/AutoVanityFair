@@ -4,7 +4,6 @@ OpenLinkedIn -- FastAPI REST backend.
 Serves the JSON API at /api/* and the web frontend from /web/.
 """
 
-import hashlib
 import hmac
 import json
 import logging
@@ -56,91 +55,8 @@ def _get(key: str):
     return _state[key]
 
 
-def _do_feed_fetch(
-    config: ConfigManager,
-    feed_crud: FeedItemCRUD,
-    content_crud: ContentLibraryCRUD,
-    min_score: float = 10.0,
-    max_results: int = 200,
-    priorities: Optional[list[int]] = None,
-) -> dict:
-    """Shared feed fetch logic used by both the API endpoint and the background job."""
-    from src.content.rss_aggregator import RSSAggregator
-    from src.content.content_filter import ContentFilter
-
-    content_filter = ContentFilter(min_score_threshold=min_score)
-    aggregator = RSSAggregator(
-        content_filter=content_filter,
-        fetch_timeout=config.aggregation.fetch_timeout,
-        max_items_per_feed=config.aggregation.max_items_per_feed,
-    )
-
-    scored = aggregator.fetch_and_filter(
-        priorities=priorities,
-        max_results=max_results,
-    )
-
-    # Compute embeddings in batch
-    embeddings: list[list[float]] = []
-    vc = config.vertex_ai
-    if vc.project_id and scored:
-        from src.content.embeddings import get_embeddings, embedding_text
-        texts = [embedding_text(item.title, item.content) for item in scored]
-        embeddings = get_embeddings(texts, project_id=vc.project_id, location="us-central1")
-
-    persisted = 0
-    for idx, item in enumerate(scored):
-        item_hash = hashlib.sha256(f"{item.title}{item.url}".encode()).hexdigest()[:16]
-        emb = embeddings[idx] if idx < len(embeddings) else None
-        feed_crud.upsert(
-            item_hash=item_hash,
-            title=item.title,
-            content=item.content,
-            url=item.url,
-            source_name=item.source,
-            author=item.author,
-            published_at=item.published_at,
-            production_score=item.production_score,
-            executive_score=item.executive_score,
-            keyword_score=item.keyword_score,
-            final_score=item.final_score,
-            content_type=item.content_type.value,
-            matched_keywords=item.matched_keywords,
-            matched_categories=item.matched_categories,
-            embedding=emb,
-        )
-        if item.final_score >= config.aggregation.auto_save_threshold:
-            content_crud.add(
-                title=item.title,
-                content=item.content,
-                source=item.url or item.source,
-                tags=[item.content_type.value],
-            )
-        persisted += 1
-
-    return {"fetched": len(scored), "persisted": persisted, "embedded": len(embeddings)}
-
-
-def _background_feed_loop(stop_event):
-    """Hourly feed fetch loop running in a background thread."""
-    interval = 3600  # 1 hour
-    logger.info("Background feed fetcher started (interval=%ds)", interval)
-    while not stop_event.wait(interval):
-        try:
-            result = _do_feed_fetch(
-                config=_get("config"),
-                feed_crud=_get("feed_crud"),
-                content_crud=_get("content_crud"),
-            )
-            logger.info("Background feed fetch: %s", result)
-        except Exception:
-            logger.exception("Background feed fetch failed")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    import threading
-
     config = ConfigManager()
     db = Database(config.paths.database)
     safety = SafetyMonitor(
@@ -165,20 +81,8 @@ async def lifespan(app: FastAPI):
         search_feedback_crud=SearchFeedbackCRUD(db),
     )
 
-    # Start hourly background feed fetcher
-    stop_event = threading.Event()
-    feed_thread = threading.Thread(
-        target=_background_feed_loop,
-        args=(stop_event,),
-        daemon=True,
-        name="feed-fetcher",
-    )
-    feed_thread.start()
-
     yield
 
-    stop_event.set()
-    feed_thread.join(timeout=5)
     _state.clear()
 
 
@@ -1049,32 +953,51 @@ def feed_source_counts():
     return feed_crud.count_by_source()
 
 
-@app.post("/api/feed/fetch")
-def fetch_feeds(
-    min_score: float = Query(default=10.0, ge=0, le=100),
-    max_results: int = Query(default=100, ge=1, le=1000),
-    priorities: Optional[str] = None,
+@app.post("/api/feed/research")
+def research_news(
+    max_topics: int = Query(default=5, ge=1, le=10),
 ):
-    """Fetch RSS feeds, score, and persist. priorities is comma-separated like '1,2'."""
-    prio_list = None
-    if priorities:
-        try:
-            prio_list = [int(p.strip()) for p in priorities.split(",")]
-        except ValueError:
-            raise HTTPException(400, "priorities must be comma-separated integers (e.g. '1,2')")
+    """Run agentic news research across multiple platforms."""
+    import threading
+
+    from src.content.news_agent import extract_topics, run_research
+
+    config = _get("config")
+    db = _get("db")
 
     try:
-        return _do_feed_fetch(
-            config=_get("config"),
-            feed_crud=_get("feed_crud"),
-            content_crud=_get("content_crud"),
-            min_score=min_score,
-            max_results=max_results,
-            priorities=prio_list,
-        )
+        topics = extract_topics(db, config, n=max_topics)
     except Exception:
-        logger.exception("Request failed")
+        logger.exception("Topic extraction failed")
         raise HTTPException(500, "Internal server error")
+
+    # Run research in a background thread to avoid blocking the event loop
+    result_holder: list[dict] = []
+    error_holder: list[Exception] = []
+
+    def _run():
+        try:
+            result = run_research(
+                topics=topics,
+                config=config,
+                feed_crud=_get("feed_crud"),
+                content_crud=_get("content_crud"),
+            )
+            result_holder.append(result)
+        except Exception as e:
+            error_holder.append(e)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=600)  # 10 min max
+
+    if error_holder:
+        logger.exception("Research failed: %s", error_holder[0])
+        raise HTTPException(500, "Internal server error")
+    if not result_holder:
+        raise HTTPException(504, "Research timed out")
+
+    return result_holder[0]
 
 
 @app.post("/api/feed/{item_id}/feedback")

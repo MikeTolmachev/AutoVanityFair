@@ -1177,19 +1177,8 @@ async function renderFeeds(el) {
 
     <div class="filter-bar">
       <div class="filter-group">
-        <label>Max Results</label>
-        <input type="number" id="feed-max-results" value="200" min="5" max="500" step="10" style="width:90px">
-      </div>
-      <div class="filter-group">
-        <label>Priorities</label>
-        <select id="feed-priorities" style="width:160px">
-          <option value="1,2">P1 + P2 (Recommended)</option>
-          <option value="">All Priorities</option>
-          <option value="1">P1: Production AI</option>
-          <option value="2">P2: Engineering</option>
-          <option value="3">P3: Infrastructure</option>
-          <option value="4">P4: Community</option>
-        </select>
+        <label>Topics</label>
+        <input type="number" id="feed-max-topics" value="5" min="1" max="10" step="1" style="width:70px">
       </div>
       <div class="filter-group">
         <label>Sort</label>
@@ -1206,7 +1195,7 @@ async function renderFeeds(el) {
           <option value="all">All</option>
         </select>
       </div>
-      <button class="btn btn-primary" onclick="fetchFeeds()">Fetch & Score</button>
+      <button class="btn btn-primary" id="research-btn" onclick="researchNews()">Research News</button>
       <button class="btn btn-secondary" onclick="retrainModel()">Retrain ML</button>
     </div>
 
@@ -1224,7 +1213,7 @@ async function renderFeeds(el) {
 }
 
 function renderFeedItems(items) {
-  if (!items.length) return '<div class="empty-state"><p>No feed items. Click "Fetch & Score" to aggregate content.</p></div>';
+  if (!items.length) return '<div class="empty-state"><p>No feed items. Click "Research News" to discover content.</p></div>';
 
   return items.map((item, i) => {
     const fb = item.feedback;
@@ -1290,16 +1279,19 @@ function filterFeedView() {
   if (countEl) countEl.textContent = `Showing ${filtered.length} of ${items.length} items`;
 }
 
-async function fetchFeeds() {
-  const maxResults = document.getElementById('feed-max-results')?.value || 200;
-  const priorities = document.getElementById('feed-priorities')?.value || '';
-  toast('Fetching feeds...', 'info');
+async function researchNews() {
+  const maxTopics = document.getElementById('feed-max-topics')?.value || 5;
+  const btn = document.getElementById('research-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Researching...'; }
+  toast('Researching news across platforms (this may take a few minutes)...', 'info');
   try {
-    const result = await api(`/feed/fetch?min_score=0&max_results=${maxResults}${priorities ? '&priorities=' + priorities : ''}`, { method: 'POST' });
-    toast(`Fetched ${result.fetched} items (${result.embedded || 0} embedded)`, 'success');
+    const result = await api(`/feed/research?max_topics=${maxTopics}`, { method: 'POST' });
+    toast(`Research complete: ${result.items_persisted} items from ${result.topics_searched} topics (${result.items_embedded || 0} embedded)`, 'success');
     navigate('feeds');
   } catch (e) {
-    toast(`Fetch failed: ${e.message}`, 'error');
+    toast(`Research failed: ${e.message}`, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Research News'; }
   }
 }
 

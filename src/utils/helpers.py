@@ -1,9 +1,48 @@
+import logging
 import re
+import ssl
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Optional
+from urllib.error import URLError
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
+
+logger = logging.getLogger("openlinkedin.helpers")
+
+USER_AGENT = (
+    "Mozilla/5.0 (compatible; OpenLinkedIn/1.0; "
+    "+https://github.com/openlinkedin)"
+)
+
+
+def fetch_url(url: str, timeout: int = 15) -> Optional[bytes]:
+    """Fetch raw bytes from a URL."""
+    try:
+        req = Request(url, headers={"User-Agent": USER_AGENT})
+        try:
+            with urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except URLError as ssl_err:
+            if "CERTIFICATE_VERIFY_FAILED" in str(ssl_err):
+                logger.warning("SSL verify failed for %s, retrying without verification", url)
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                with urlopen(req, timeout=timeout, context=ctx) as resp:
+                    return resp.read()
+            raise
+    except (URLError, OSError, TimeoutError) as e:
+        logger.warning("Failed to fetch %s: %s", url, e)
+        return None
+
+
+def strip_html(text: str) -> str:
+    """Remove HTML tags from text."""
+    clean = re.sub(r"<[^>]+>", " ", text)
+    clean = re.sub(r"\s+", " ", clean)
+    return clean.strip()
 
 
 def utc_now() -> datetime:
