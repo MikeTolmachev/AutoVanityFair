@@ -22,6 +22,7 @@ async def build_playwright(headless: bool = False, slow_mo: int = 50, profile_di
         args=[
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",
+            "--use-mock-keychain",
         ],
     )
 
