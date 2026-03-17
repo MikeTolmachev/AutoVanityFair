@@ -1067,49 +1067,16 @@ def save_feed_item_to_library(item_id: int):
 # ---------------------------------------------------------------------------
 
 
-@app.post("/api/feed/retrain")
-def retrain_reranker():
-    config: ConfigManager = _get("config")
-    feed_crud: FeedItemCRUD = _get("feed_crud")
-    feedback_crud: FeedbackCRUD = _get("feedback_crud")
+@app.post("/api/feed/clear")
+def clear_feed_items():
+    """Delete all feed items and their feedback. Preserves content library."""
+    db: Database = _get("db")
     try:
-        from src.content.reranker import FeedReranker
-
-        reranker = FeedReranker()
-        training_data = feedback_crud.get_all_training_data()
-        feedback_map = feedback_crud.get_feedback_map()
-        published_hashes = feedback_crud.get_published_item_hashes()
-        for h in published_hashes:
-            if h not in feedback_map:
-                feedback_map[h] = "liked"
-
-        # Backfill embeddings for training items that don't have them yet
-        vc = config.vertex_ai
-        if vc.project_id:
-            from src.content.embeddings import get_embeddings, embedding_text
-
-            missing = [r for r in training_data if not r.get("embedding")]
-            if missing:
-                texts = [embedding_text(r.get("title", ""), r.get("content", "")) for r in missing]
-                embeddings = get_embeddings(texts, project_id=vc.project_id, location="us-central1")
-                for row, emb in zip(missing, embeddings):
-                    row["embedding"] = json.dumps(emb)
-                    if row.get("id"):
-                        feed_crud.update_embedding(row["id"], emb)
-                logger.info("Backfilled embeddings for %d training items", len(missing))
-
-        result = reranker.train(training_data, feedback_map)
-
-        # Rescore all feed items with the newly trained model
-        if result.get("status") == "trained":
-            all_items = feed_crud.get_all()
-            scored = reranker.rescore_db_rows(all_items)
-            for item_id, new_score in scored:
-                feed_crud.update_final_score(item_id, new_score)
-            result["rescored"] = len(scored)
-            logger.info("Rescored %d feed items with new model", len(scored))
-
-        return result
+        with db.connect() as conn:
+            conn.execute("DELETE FROM user_feedback")
+            conn.execute("DELETE FROM feed_items")
+        logger.info("Cleared all feed items and feedback")
+        return {"status": "cleared"}
     except Exception:
         logger.exception("Request failed")
         raise HTTPException(500, "Internal server error")

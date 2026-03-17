@@ -1183,8 +1183,8 @@ async function renderFeeds(el) {
       <div class="filter-group">
         <label>Sort</label>
         <select id="feed-sort" onchange="filterFeedView()">
-          <option value="score">By Relevance</option>
           <option value="date">By Date (Newest)</option>
+          <option value="source">By Source</option>
         </select>
       </div>
       <div class="filter-group">
@@ -1196,6 +1196,7 @@ async function renderFeeds(el) {
         </select>
       </div>
       <button class="btn btn-primary" id="research-btn" onclick="researchNews()">Research News</button>
+      <button class="btn btn-secondary" onclick="clearFeedData()" style="font-size:0.76rem">Clear Old Data</button>
     </div>
 
     <div id="research-topics-panel" style="display:none;margin-bottom:20px"></div>
@@ -1228,13 +1229,10 @@ function renderFeedItems(items) {
             <div style="font-weight:600;font-size:0.95rem;margin-bottom:4px">${escapeHtml(item.title)}</div>
             <div class="content-card-meta">
               ${escapeHtml(item.source_name || '')}
-              ${item.content_type ? ' &middot; ' + escapeHtml(item.content_type) : ''}
               ${item.author ? ' &middot; ' + escapeHtml(item.author) : ''}
               ${item.published_at ? ' &middot; <strong>' + escapeHtml(item.published_at.slice(0, 16)) + '</strong>' : ''}
-              ${item.freshness_multiplier != null && item.freshness_multiplier < 1 ? ` &middot; Freshness: ${(item.freshness_multiplier * 100).toFixed(0)}%` : ''}
             </div>
           </div>
-          <div class="score ${scoreClass(item.final_score || 0)}">${(item.final_score || 0).toFixed(1)}</div>
         </div>
         <div class="content-card-body truncate">${escapeHtml(item.content || '')}</div>
         ${keywords.length ? `<div class="feed-keywords">${keywords.slice(0,8).map(k => `<span class="keyword-tag">${escapeHtml(k)}</span>`).join('')}</div>` : ''}
@@ -1262,14 +1260,14 @@ function filterFeedView() {
   else if (view === 'unlabeled') filtered = items.filter(i => !i.feedback);
   else filtered = items.slice();
 
-  if (sort === 'date') {
+  if (sort === 'source') {
+    filtered.sort((a, b) => (a.source_name || '').localeCompare(b.source_name || ''));
+  } else {
     filtered.sort((a, b) => {
       const ta = new Date(a.published_at || '').getTime() || 0;
       const tb = new Date(b.published_at || '').getTime() || 0;
       return tb - ta;
     });
-  } else {
-    filtered.sort((a, b) => (b.final_score || 0) - (a.final_score || 0));
   }
 
   const container = document.getElementById('feed-items-container');
@@ -1380,7 +1378,7 @@ async function feedFeedback(itemId, feedback, btn) {
 
 async function saveFeedToLibrary(itemId) {
   try {
-    // Auto-like: saving an article is a positive signal for the reranker
+    // Auto-like: saving an article is a positive signal for future topic extraction
     const item = (window._feedItems || []).find(i => i.id === itemId);
     if (item && item.feedback !== 'liked') {
       await api(`/feed/${itemId}/feedback`, { method: 'POST', body: { feedback: 'liked' } });
@@ -1392,6 +1390,17 @@ async function saveFeedToLibrary(itemId) {
     openLibraryDoc(result.id);
   } catch (e) {
     toast(`Save failed: ${e.message}`, 'error');
+  }
+}
+
+async function clearFeedData() {
+  if (!confirm('This will delete all feed items and feedback. Continue?')) return;
+  try {
+    await api('/feed/clear', { method: 'POST' });
+    toast('Feed data cleared', 'success');
+    navigate('feeds');
+  } catch (e) {
+    toast('Clear failed: ' + e.message, 'error');
   }
 }
 
