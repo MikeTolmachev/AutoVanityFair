@@ -38,7 +38,8 @@ def extract_topics(db: Database, config, n: int = 5) -> list[str]:
     """
     from src.content.generator import create_ai_provider
 
-    texts: list[str] = []
+    post_texts: list[str] = []
+    liked_texts: list[str] = []
 
     # Collect recent published posts (last 30 days)
     with db.connect() as conn:
@@ -49,7 +50,7 @@ def extract_topics(db: Database, config, n: int = 5) -> list[str]:
                ORDER BY published_at DESC LIMIT 20""",
         ).fetchall()
         for r in rows:
-            texts.append(r["content"][:300])
+            post_texts.append(r["content"][:500])
 
     # Collect liked feed items
     with db.connect() as conn:
@@ -60,32 +61,44 @@ def extract_topics(db: Database, config, n: int = 5) -> list[str]:
                ORDER BY uf.created_at DESC LIMIT 20""",
         ).fetchall()
         for r in rows:
-            texts.append(f"{r['title']}. {r['content'][:200]}")
+            liked_texts.append(f"{r['title']}. {r['content'][:200]}")
 
-    if not texts:
+    if not post_texts and not liked_texts:
         from src.content.keyword_taxonomy import HIGH_PRIORITY_KEYWORDS
-        # Use a sample of high-priority keywords as fallback topics
         sample = list(HIGH_PRIORITY_KEYWORDS)[:n]
         logger.info("No history found, using fallback topics: %s", sample)
         return sample
 
-    combined = "\n---\n".join(texts)
+    sections = []
+    if post_texts:
+        sections.append("## MY PUBLISHED LINKEDIN POSTS:\n" + "\n---\n".join(post_texts))
+    if liked_texts:
+        sections.append("## ARTICLES I LIKED:\n" + "\n---\n".join(liked_texts))
+
+    context = "\n\n".join(sections)
+
     prompt = (
-        "Extract 3-5 distinct trending topics/themes from these posts and articles. "
-        "Return as a JSON array of short search queries (2-5 words each). "
-        "Focus on specific technologies, companies, or trends — not generic terms.\n\n"
-        f"{combined}"
-    )
+        "You are a research assistant for an AI/ML executive who publishes thought leadership on LinkedIn.\n\n"
+        "Below are their recent published posts and liked articles. Analyze the SPECIFIC technical themes, "
+        "technologies, frameworks, and research directions they cover.\n\n"
+        f"{context}\n\n"
+        "Based on this content, generate exactly {n} search queries that would find NEW related content "
+        "on Reddit, Hacker News, and tech blogs. Each query should:\n"
+        "- Target the specific technical niche from their posts (e.g. 'LLM inference optimization', "
+        "'vision language model efficiency', 'on-device ML Apple Neural Engine')\n"
+        "- Be 2-6 words, specific enough to return relevant results\n"
+        "- Cover different themes from their portfolio — don't repeat the same angle\n"
+        "- Focus on what would make good follow-up content for their audience\n\n"
+        "Return ONLY a JSON array of strings. No explanation."
+    ).format(n=n)
 
     try:
         ai = create_ai_provider(config.ai)
         result = ai.generate(
-            system_prompt="You extract search topics. Return ONLY a JSON array of strings.",
+            system_prompt="You analyze content themes and generate targeted search queries. Return ONLY a JSON array of strings.",
             user_prompt=prompt,
         )
-        # Parse JSON from response
-        text = result.text.strip()
-        # Handle markdown code blocks
+        text = result.content.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
         topics = json.loads(text)
@@ -104,7 +117,6 @@ def _research_topic(topic: str, script_path: str, timeout: int = 300) -> list[di
         "python3", script_path,
         topic,
         "--emit=json",
-        "--quick",
     ]
     logger.info("Researching topic: %s", topic)
 
