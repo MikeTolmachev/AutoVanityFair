@@ -157,7 +157,13 @@ def cmd_web(args):
     port = args.port or 8000
     print(f"Starting OpenLinkedIn Web UI at http://{host}:{port}")
     print("  (Streamlit UI still available via: python main.py ui)")
-    uvicorn.run("api.server:app", host=host, port=port, reload=args.reload)
+    log_config = uvicorn.config.LOGGING_CONFIG
+    fmt = "%(asctime)s %(levelname)-5s [%(name)s] %(message)s"
+    datefmt = "%H:%M:%S"
+    for handler in log_config["formatters"].values():
+        handler["fmt"] = fmt
+        handler["datefmt"] = datefmt
+    uvicorn.run("api.server:app", host=host, port=port, reload=args.reload, log_config=log_config)
 
 
 def cmd_generate_post(args):
