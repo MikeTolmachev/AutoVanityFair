@@ -105,15 +105,24 @@ def _research_topic(topic: str, script_path: str, timeout: int = 300) -> list[di
         topic,
         "--emit=json",
         "--quick",
-        "--no-native-web",
     ]
     logger.info("Researching topic: %s", topic)
+
+    # Inherit env and fix Python 3.14 SSL cert issue on macOS
+    env = dict(os.environ)
+    try:
+        import certifi
+        env.setdefault("SSL_CERT_FILE", certifi.where())
+    except ImportError:
+        pass
+
     try:
         proc = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=env,
         )
         if proc.returncode != 0:
             logger.warning("last30days failed for '%s': %s", topic, proc.stderr[:500])
