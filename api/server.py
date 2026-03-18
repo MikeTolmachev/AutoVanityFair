@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO),
     format="%(asctime)s %(levelname)-5s [%(name)s] %(message)s",
     datefmt="%H:%M:%S",
 )
@@ -981,6 +981,10 @@ class ResearchRequest(BaseModel):
     sources: list[str] | None = None
 
 
+import threading as _threading  # noqa: E402
+_research_lock = _threading.Lock()
+
+
 @app.post("/api/feed/research")
 def research_news(body: ResearchRequest):
     """Run agentic news research for the given topics."""
@@ -990,6 +994,9 @@ def research_news(body: ResearchRequest):
 
     if not body.topics:
         raise HTTPException(400, "topics list cannot be empty")
+
+    if not _research_lock.acquire(blocking=False):
+        raise HTTPException(429, "Research already in progress")
 
     config = _get("config")
 
@@ -1009,17 +1016,20 @@ def research_news(body: ResearchRequest):
         except Exception as e:
             error_holder.append(e)
 
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    t.join(timeout=600)  # 10 min max
+    try:
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        t.join(timeout=600)  # 10 min max
 
-    if error_holder:
-        logger.exception("Research failed: %s", error_holder[0])
-        raise HTTPException(500, "Internal server error")
-    if not result_holder:
-        raise HTTPException(504, "Research timed out")
+        if error_holder:
+            logger.exception("Research failed: %s", error_holder[0])
+            raise HTTPException(500, "Internal server error")
+        if not result_holder:
+            raise HTTPException(504, "Research timed out")
 
-    return result_holder[0]
+        return result_holder[0]
+    finally:
+        _research_lock.release()
 
 
 @app.post("/api/feed/{item_id}/feedback")

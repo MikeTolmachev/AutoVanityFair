@@ -18,6 +18,11 @@ from src.database.models import Database
 
 logger = logging.getLogger("openlinkedin.news_agent")
 
+VALID_SOURCES = frozenset({
+    "hn", "reddit", "web", "youtube", "x", "bluesky",
+    "tiktok", "polymarket", "instagram", "truthsocial",
+})
+
 
 def _find_skill_root() -> str:
     """Locate the last30days script."""
@@ -78,19 +83,19 @@ def extract_topics(db: Database, config, n: int = 5) -> list[str]:
     context = "\n\n".join(sections)
 
     prompt = (
-        "You are a research assistant for a VP-level AI/ML executive who publishes thought leadership on LinkedIn.\n\n"
-        "Below are their recent published posts and liked articles.\n\n"
+        f"You are a research assistant for a VP-level AI/ML executive who publishes thought leadership on LinkedIn.\n\n"
+        f"Below are their recent published posts and liked articles.\n\n"
         f"{context}\n\n"
-        "Generate exactly {n} search queries to find NEW content that this executive would want to share. "
-        "The queries should be a MIX of:\n"
-        "- 2-3 queries on BROAD industry trends they'd comment on (new model releases, big company moves "
-        "like NVIDIA/Google/OpenAI announcements, AI regulation, funding rounds, strategic shifts)\n"
-        "- 2-3 queries on SPECIFIC technical themes from their posts (but framed at an executive level, "
-        "e.g. 'LLM inference cost reduction' not 'CUDA kernel optimization')\n\n"
-        "Each query should be 2-5 words. Think like a VP scanning Hacker News and industry news — "
-        "strategic, not implementation-level.\n\n"
-        "Return ONLY a JSON array of strings. No explanation."
-    ).format(n=n)
+        f"Generate exactly {n} search queries to find NEW content that this executive would want to share. "
+        f"The queries should be a MIX of:\n"
+        f"- 2-3 queries on BROAD industry trends they'd comment on (new model releases, big company moves "
+        f"like NVIDIA/Google/OpenAI announcements, AI regulation, funding rounds, strategic shifts)\n"
+        f"- 2-3 queries on SPECIFIC technical themes from their posts (but framed at an executive level, "
+        f"e.g. 'LLM inference cost reduction' not 'CUDA kernel optimization')\n\n"
+        f"Each query should be 2-5 words. Think like a VP scanning Hacker News and industry news — "
+        f"strategic, not implementation-level.\n\n"
+        f"Return ONLY a JSON array of strings. No explanation."
+    )
 
     try:
         ai = create_ai_provider(config.ai)
@@ -118,13 +123,20 @@ def _research_topic(
     sources: list[str] | None = None,
 ) -> list[dict]:
     """Run last30days for a single topic and return parsed items."""
+    # Sanitize topic: reject flag-like strings, cap length
+    if topic.startswith("-") or len(topic) > 200:
+        logger.warning("Rejected invalid topic: %s", topic[:50])
+        return []
+
     cmd = [
         "python3", script_path,
         topic,
         "--emit=json",
     ]
     if sources:
-        cmd.extend(["--search", ",".join(sources)])
+        validated = [s for s in sources if s in VALID_SOURCES]
+        if validated:
+            cmd.extend(["--search", ",".join(validated)])
     logger.info("Researching topic: %s", topic)
 
     # Inherit env and fix Python 3.14 SSL cert issue on macOS
