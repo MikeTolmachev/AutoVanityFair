@@ -78,17 +78,17 @@ def extract_topics(db: Database, config, n: int = 5) -> list[str]:
     context = "\n\n".join(sections)
 
     prompt = (
-        "You are a research assistant for an AI/ML executive who publishes thought leadership on LinkedIn.\n\n"
-        "Below are their recent published posts and liked articles. Analyze the SPECIFIC technical themes, "
-        "technologies, frameworks, and research directions they cover.\n\n"
+        "You are a research assistant for a VP-level AI/ML executive who publishes thought leadership on LinkedIn.\n\n"
+        "Below are their recent published posts and liked articles.\n\n"
         f"{context}\n\n"
-        "Based on this content, generate exactly {n} search queries that would find NEW related content "
-        "on Reddit, Hacker News, and tech blogs. Each query should:\n"
-        "- Target the specific technical niche from their posts (e.g. 'LLM inference optimization', "
-        "'vision language model efficiency', 'on-device ML Apple Neural Engine')\n"
-        "- Be 2-6 words, specific enough to return relevant results\n"
-        "- Cover different themes from their portfolio — don't repeat the same angle\n"
-        "- Focus on what would make good follow-up content for their audience\n\n"
+        "Generate exactly {n} search queries to find NEW content that this executive would want to share. "
+        "The queries should be a MIX of:\n"
+        "- 2-3 queries on BROAD industry trends they'd comment on (new model releases, big company moves "
+        "like NVIDIA/Google/OpenAI announcements, AI regulation, funding rounds, strategic shifts)\n"
+        "- 2-3 queries on SPECIFIC technical themes from their posts (but framed at an executive level, "
+        "e.g. 'LLM inference cost reduction' not 'CUDA kernel optimization')\n\n"
+        "Each query should be 2-5 words. Think like a VP scanning Hacker News and industry news — "
+        "strategic, not implementation-level.\n\n"
         "Return ONLY a JSON array of strings. No explanation."
     ).format(n=n)
 
@@ -111,13 +111,20 @@ def extract_topics(db: Database, config, n: int = 5) -> list[str]:
     return list(HIGH_PRIORITY_KEYWORDS)[:n]
 
 
-def _research_topic(topic: str, script_path: str, timeout: int = 300) -> list[dict]:
+def _research_topic(
+    topic: str,
+    script_path: str,
+    timeout: int = 300,
+    sources: list[str] | None = None,
+) -> list[dict]:
     """Run last30days for a single topic and return parsed items."""
     cmd = [
         "python3", script_path,
         topic,
         "--emit=json",
     ]
+    if sources:
+        cmd.extend(["--search", ",".join(sources)])
     logger.info("Researching topic: %s", topic)
 
     # Inherit env and fix Python 3.14 SSL cert issue on macOS
@@ -210,6 +217,7 @@ def run_research(
     config,
     feed_crud: FeedItemCRUD,
     content_crud: ContentLibraryCRUD,
+    sources: list[str] | None = None,
 ) -> dict:
     """Run multi-platform research for all topics and persist results."""
     script_path = _find_skill_root()
@@ -219,7 +227,7 @@ def run_research(
     all_raw: list[dict] = []
     with ThreadPoolExecutor(max_workers=5) as pool:
         futures = {
-            pool.submit(_research_topic, topic, script_path): topic
+            pool.submit(_research_topic, topic, script_path, sources=sources): topic
             for topic in topics
         }
         for future in as_completed(futures):

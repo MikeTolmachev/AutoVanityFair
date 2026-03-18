@@ -978,6 +978,7 @@ def extract_research_topics(
 
 class ResearchRequest(BaseModel):
     topics: list[str]
+    sources: list[str] | None = None
 
 
 @app.post("/api/feed/research")
@@ -1002,6 +1003,7 @@ def research_news(body: ResearchRequest):
                 config=config,
                 feed_crud=_get("feed_crud"),
                 content_crud=_get("content_crud"),
+                sources=body.sources,
             )
             result_holder.append(result)
         except Exception as e:
