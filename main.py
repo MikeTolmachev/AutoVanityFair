@@ -158,11 +158,15 @@ def cmd_web(args):
     print(f"Starting OpenLinkedIn Web UI at http://{host}:{port}")
     print("  (Streamlit UI still available via: python main.py ui)")
     log_config = uvicorn.config.LOGGING_CONFIG
-    fmt = "%(asctime)s %(levelname)-5s [%(name)s] %(message)s"
     datefmt = "%H:%M:%S"
-    for handler in log_config["formatters"].values():
-        handler["fmt"] = fmt
-        handler["datefmt"] = datefmt
+    for name, formatter in log_config["formatters"].items():
+        formatter["datefmt"] = datefmt
+        if formatter.get("()") == "uvicorn.logging.DefaultFormatter":
+            formatter["fmt"] = "%(asctime)s %(levelprefix)s [%(name)s] %(message)s"
+        elif formatter.get("()") == "uvicorn.logging.AccessFormatter":
+            formatter["fmt"] = '%(asctime)s %(levelprefix)s [%(name)s] %(client_addr)s - "%(request_line)s" %(status_code)s'
+        else:
+            formatter["fmt"] = "%(asctime)s %(levelname)-5s [%(name)s] %(message)s"
     uvicorn.run("api.server:app", host=host, port=port, reload=args.reload, log_config=log_config)
 
 
