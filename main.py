@@ -4,7 +4,7 @@ OpenLinkedIn CLI entry point.
 
 Usage:
     python main.py run          Start the scheduler daemon
-    python main.py ui           Launch the Streamlit UI
+    python main.py web          Launch the web UI
     python main.py setup        Initialize directories and database
     python main.py generate-post [topic]   Generate a single post
 """
@@ -12,7 +12,6 @@ Usage:
 import argparse
 import os
 import signal
-import subprocess
 import sys
 import time
 
@@ -143,12 +142,6 @@ def cmd_run(args):
         time.sleep(60)
 
 
-def cmd_ui(args):
-    """Launch the Streamlit UI."""
-    ui_path = os.path.join(os.path.dirname(__file__), "ui", "app.py")
-    subprocess.run(["streamlit", "run", ui_path, "--server.headless", "true"])
-
-
 def cmd_web(args):
     """Launch the modern web UI (FastAPI + JS frontend)."""
     import uvicorn
@@ -156,7 +149,7 @@ def cmd_web(args):
     host = args.host or "127.0.0.1"
     port = args.port or 8000
     print(f"Starting OpenLinkedIn Web UI at http://{host}:{port}")
-    print("  (Streamlit UI still available via: python main.py ui)")
+    print("  Press Ctrl+C to stop.")
     log_config = uvicorn.config.LOGGING_CONFIG
     datefmt = "%H:%M:%S"
     for name, formatter in log_config["formatters"].items():
@@ -244,7 +237,6 @@ def main():
 
     subparsers.add_parser("setup", help="Initialize directories and database")
     subparsers.add_parser("run", help="Start the scheduler daemon")
-    subparsers.add_parser("ui", help="Launch Streamlit UI (legacy)")
 
     web_parser = subparsers.add_parser("web", help="Launch modern web UI")
     web_parser.add_argument("--host", default="127.0.0.1", help="Bind host")
@@ -273,8 +265,6 @@ def main():
         cmd_setup(args)
     elif args.command == "run":
         cmd_run(args)
-    elif args.command == "ui":
-        cmd_ui(args)
     elif args.command == "web":
         cmd_web(args)
     elif args.command == "generate-post":
