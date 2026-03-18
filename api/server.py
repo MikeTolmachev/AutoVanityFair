@@ -17,6 +17,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s %(levelname)-5s [%(name)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
 logger = logging.getLogger("openlinkedin.api")
 
 # ---------------------------------------------------------------------------
@@ -1189,6 +1194,15 @@ WEB_DIR = os.path.join(os.path.dirname(__file__), "..", "web")
 @app.get("/")
 def serve_index():
     return FileResponse(os.path.join(WEB_DIR, "index.html"))
+
+
+@app.get("/favicon.ico")
+def favicon():
+    path = os.path.join(WEB_DIR, "favicon.ico")
+    if os.path.isfile(path):
+        return FileResponse(path)
+    from fastapi.responses import Response
+    return Response(status_code=204)
 
 
 # Mount static files last so API routes take priority
